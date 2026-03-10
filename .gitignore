@@ -1,0 +1,8 @@
+.DS_Store
+.idea/
+.vscode/
+pg_wasm.code-workspace
+/target
+*.iml
+**/*.rs.bk
+Cargo.lock

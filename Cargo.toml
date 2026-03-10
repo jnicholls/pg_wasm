@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = [
+    "pg_wasm",
+]
+
+[workspace.package]
+authors = ["Jarred Nicholls <jarred.nicholls@gmail.com>"]
+edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+pgrx = "=0.17.0"
+pgrx-tests = "=0.17.0"
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
