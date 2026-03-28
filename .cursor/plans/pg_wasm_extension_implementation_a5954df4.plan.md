@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: registry-trampoline
     content: In-memory registry fn_oid to module handle and export name; single trampoline returning a constant; register trampoline with pgrx; verify in tests.
-    status: pending
+    status: completed
   - id: dynamic-udf-registration
     content: Create and drop pg_proc per export via pgrx/pg_sys; unload removes procs; SELECT hits trampoline and resolves Oid correctly.
     status: pending

@@ -25,7 +25,13 @@ fn fn_oid_map() -> &'static Mutex<HashMap<Oid, RegisteredFunction>> {
     FN_OID_MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Register trampoline target metadata (no-op until dynamic registration is implemented).
+/// Register trampoline dispatch metadata for a `pg_proc` OID (typically right after `ProcedureCreate`).
+pub fn unregister_fn_oid(oid: Oid) {
+    let mut g = fn_oid_map().lock().expect("fn_oid map poisoned");
+    g.remove(&oid);
+}
+
+/// Register trampoline target metadata for a `pg_proc` OID.
 pub fn register_fn_oid(oid: Oid, entry: RegisteredFunction) {
     let mut g = fn_oid_map().lock().expect("fn_oid map poisoned");
     g.insert(oid, entry);
