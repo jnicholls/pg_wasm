@@ -2,17 +2,17 @@
 
 mod stub;
 
+#[cfg(feature = "runtime_extism")]
+pub mod extism_backend;
 #[cfg(feature = "runtime_wasmer")]
 pub mod wasmer_backend;
 #[cfg(feature = "runtime_wasmtime")]
 pub mod wasmtime_backend;
-#[cfg(feature = "runtime_extism")]
-pub mod extism_backend;
 
 pub use stub::StubWasmBackend;
 
 /// Which concrete runtime executes a module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RuntimeKind {
     Wasmtime,
     Wasmer,

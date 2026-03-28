@@ -3,8 +3,7 @@
 //! PostgreSQL `prosrc` must be [`TRAMPOLINE_PG_SYMBOL`] (not the `…_wrapper` suffix used by
 //! `#[pg_extern]`), with a matching `pg_finfo_*` entry for the v1 call convention.
 
-use pgrx::prelude::*;
-use pgrx::pg_sys;
+use pgrx::{pg_sys, prelude::*};
 
 /// `CREATE FUNCTION … AS '$libdir/pg_wasm', '…'` link name for the trampoline body.
 pub const TRAMPOLINE_PG_SYMBOL: &str = "pg_wasm_udf_trampoline";
@@ -21,9 +20,7 @@ pub extern "C" fn pg_finfo_pg_wasm_udf_trampoline() -> &'static pg_sys::Pg_finfo
 pub unsafe extern "C-unwind" fn pg_wasm_udf_trampoline(
     fcinfo: pg_sys::FunctionCallInfo,
 ) -> pg_sys::Datum {
-    unsafe {
-        pgrx::pg_sys::ffi::pg_guard_ffi_boundary(|| dispatch_from_trampoline(fcinfo))
-    }
+    unsafe { pgrx::pg_sys::ffi::pg_guard_ffi_boundary(|| dispatch_from_trampoline(fcinfo)) }
 }
 
 fn dispatch_from_trampoline(fcinfo: pg_sys::FunctionCallInfo) -> pg_sys::Datum {

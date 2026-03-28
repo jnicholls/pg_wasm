@@ -1,18 +1,20 @@
 //! In-process registry for loaded modules and `fn_oid` → export metadata (populated in later todos).
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
 use pgrx::pg_sys::Oid;
 
 use crate::mapping::ExportSignature;
 
 /// Stable handle for a loaded module (bigint / sequence in SQL).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ModuleId(pub i64);
 
 /// Metadata for one dynamically registered UDF.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct RegisteredFunction {
     pub module_id: ModuleId,
     pub export_name: String,

@@ -30,7 +30,7 @@ impl LoadOptions {
 }
 
 /// Effective host capabilities for WASI / imports (extension GUC ∩ per-module options).
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct HostPolicy {
     pub allow_wasi: bool,
     pub allow_fs_read: bool,

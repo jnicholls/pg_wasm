@@ -3,7 +3,7 @@
 use pgrx::pg_sys::Oid;
 
 /// Classifies how a SQL argument maps to the WASM ABI for core modules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PgWasmTypeKind {
     I32,
     I64,
@@ -16,14 +16,14 @@ pub enum PgWasmTypeKind {
 }
 
 /// Describes one SQL argument position for dynamic dispatch.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct PgWasmArgDesc {
     pub pg_oid: Oid,
     pub kind: PgWasmTypeKind,
 }
 
 /// Describes the return mapping for a WASM export registered as a UDF.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct PgWasmReturnDesc {
     pub pg_oid: Oid,
     pub kind: PgWasmTypeKind,
@@ -39,7 +39,7 @@ impl Default for PgWasmReturnDesc {
 }
 
 /// Placeholder for the per-export signature table used by the trampoline.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ExportSignature {
     pub args: Vec<PgWasmArgDesc>,
     pub ret: PgWasmReturnDesc,

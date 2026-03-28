@@ -14,12 +14,12 @@ pub use registry::{
 pub use runtime::{RuntimeKind, StubWasmBackend, WasmRuntimeBackend};
 pub use trampoline::TRAMPOLINE_PG_SYMBOL;
 
-#[cfg(feature = "runtime_wasmtime")]
-pub use runtime::wasmtime_backend::WasmtimeBackend;
-#[cfg(feature = "runtime_wasmer")]
-pub use runtime::wasmer_backend::WasmerBackend;
 #[cfg(feature = "runtime_extism")]
 pub use runtime::extism_backend::ExtismBackend;
+#[cfg(feature = "runtime_wasmer")]
+pub use runtime::wasmer_backend::WasmerBackend;
+#[cfg(feature = "runtime_wasmtime")]
+pub use runtime::wasmtime_backend::WasmtimeBackend;
 
 ::pgrx::pg_module_magic!(name, version);
 
@@ -31,11 +31,12 @@ fn hello_pg_wasm() -> &'static str {
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {
-    use pgrx::prelude::*;
-    use pgrx::spi::Spi;
+    use pgrx::{prelude::*, spi::Spi};
 
-    use crate::mapping::ExportSignature;
-    use crate::registry::{ModuleId, RegisteredFunction, register_fn_oid};
+    use crate::{
+        mapping::ExportSignature,
+        registry::{ModuleId, RegisteredFunction, register_fn_oid},
+    };
     #[pg_test]
     fn test_hello_pg_wasm() {
         assert_eq!("Hello, pg_wasm", crate::hello_pg_wasm());
