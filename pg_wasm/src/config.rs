@@ -29,6 +29,67 @@ impl PolicyOverrides {
     }
 }
 
+/// Per-module resource overrides (`max_memory_pages`, `fuel`) in load/reconfigure JSON (plan §10).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ModuleResourceLimits {
+    /// Cap guest linear memory per store (Wasm page = 64 KiB). `None` = use extension GUC only.
+    pub max_memory_pages: Option<u32>,
+    /// Fuel budget per wasm entry (host call, lifecycle hook, or trampoline). `None` = GUC only.
+    pub fuel: Option<u64>,
+}
+
+impl ModuleResourceLimits {
+    #[must_use]
+    pub fn from_json_value(val: &serde_json::Value) -> Self {
+        Self {
+            max_memory_pages: val
+                .get("max_memory_pages")
+                .and_then(json_u32_positive),
+            fuel: val.get("fuel").and_then(json_u64_positive),
+        }
+    }
+}
+
+/// Keys present in `delta` replace `base`; use JSON `null` to clear an override (reconfigure).
+#[must_use]
+pub fn merge_resource_limits(
+    base: ModuleResourceLimits,
+    delta: &serde_json::Value,
+) -> ModuleResourceLimits {
+    let mut out = base;
+    if let Some(v) = delta.get("max_memory_pages") {
+        out.max_memory_pages = if v.is_null() {
+            None
+        } else {
+            json_u32_positive(v)
+        };
+    }
+    if let Some(v) = delta.get("fuel") {
+        out.fuel = if v.is_null() {
+            None
+        } else {
+            json_u64_positive(v)
+        };
+    }
+    out
+}
+
+fn json_u32_positive(v: &serde_json::Value) -> Option<u32> {
+    let n = v.as_u64()?;
+    if n == 0 {
+        return None;
+    }
+    Some(n.min(u64::from(u32::MAX)) as u32)
+}
+
+fn json_u64_positive(v: &serde_json::Value) -> Option<u64> {
+    let n = v.as_u64()?;
+    if n == 0 {
+        return None;
+    }
+    Some(n)
+}
+
 /// Per-module and load-time options passed as JSONB to `pg_wasm_load` (see plan §8–9).
 #[derive(Debug, Default)]
 pub struct LoadOptions {
@@ -42,7 +103,9 @@ pub struct LoadOptions {
     pub hook_on_reconfigure: Option<String>,
     /// Per-module policy overrides (top-level keys or `policy` object).
     pub policy: PolicyOverrides,
-    /// Opaque JSON preserved for future keys (fuel, memory pages, etc.).
+    /// Per-module resource limits (top-level `max_memory_pages`, `fuel`); merged with GUCs at runtime.
+    pub resource_limits: ModuleResourceLimits,
+    /// Opaque JSON preserved for future keys.
     pub raw: Option<JsonB>,
 }
 
@@ -83,6 +146,7 @@ impl LoadOptions {
             hook_on_unload,
             hook_on_reconfigure,
             policy: policy_overrides_from_json(&val),
+            resource_limits: ModuleResourceLimits::from_json_value(&val),
             raw: Some(JsonB(val)),
         }
     }

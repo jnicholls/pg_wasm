@@ -6,7 +6,7 @@ use pgrx::{prelude::*, spi::Spi, JsonB};
 
 use crate::{
     abi::{self, WasmAbiKind},
-    config::{LoadOptions, merge_policy_overrides},
+    config::{LoadOptions, merge_policy_overrides, merge_resource_limits},
     guc::{
         allow_load_from_file, allowed_path_prefixes_raw, effective_host_policy, max_module_bytes,
         module_path_cstr,
@@ -142,6 +142,7 @@ pub fn load_from_bytes(
 
     registry::record_module_abi(id, abi);
     registry::record_module_wasi_and_policy(id, needs_wasi, opts.policy);
+    registry::record_module_resource_limits(id, opts.resource_limits);
     let runtime = opts
         .runtime
         .clone()
@@ -195,6 +196,16 @@ pub fn reconfigure_module(module_id: i64, options: Option<JsonB>) -> Result<(), 
         ));
     }
     registry::replace_module_policy_overrides(mid, merged).map_err(|()| {
+        LoadError::Message(format!(
+            "pg_wasm_reconfigure_module: unknown module_id {module_id}"
+        ))
+    })?;
+
+    let old_limits = registry::module_resource_limits(mid).ok_or_else(|| {
+        LoadError::Message(format!("pg_wasm_reconfigure_module: unknown module_id {module_id}"))
+    })?;
+    let merged_limits = merge_resource_limits(old_limits, &delta);
+    registry::replace_module_resource_limits(mid, merged_limits).map_err(|()| {
         LoadError::Message(format!(
             "pg_wasm_reconfigure_module: unknown module_id {module_id}"
         ))

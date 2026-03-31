@@ -5,6 +5,7 @@ use std::ffi::CString;
 use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting};
 
 use crate::config::{HostPolicy, PolicyOverrides};
+use crate::registry::ModuleId;
 
 /// Base directory for relative `pg_wasm_load(text)` paths (`pg_wasm.module_path`).
 pub static PG_WASM_MODULE_PATH: GucSetting<Option<CString>> =
@@ -38,6 +39,13 @@ pub static PG_WASM_ALLOW_WASI_NETWORK: GucSetting<bool> = GucSetting::<bool>::ne
 
 /// When off, per-call timing and invocation counters are not updated (`pg_wasm.collect_metrics`).
 pub static PG_WASM_COLLECT_METRICS: GucSetting<bool> = GucSetting::<bool>::new(true);
+
+/// Max Wasm linear memory pages (64 KiB each) per guest store. `0` = no extension-side cap (plan §10).
+pub static PG_WASM_MAX_MEMORY_PAGES: GucSetting<i32> = GucSetting::<i32>::new(4096);
+
+/// Fuel units per wasm invocation when fuel is enabled (`pg_wasm.fuel_per_invocation`). `0` = unlimited.
+pub static PG_WASM_FUEL_PER_INVOCATION: GucSetting<i32> =
+    GucSetting::<i32>::new(500_000_000);
 
 pub fn init() {
     GucRegistry::define_string_guc(
@@ -122,6 +130,26 @@ pub fn init() {
         GucContext::Suset,
         GucFlags::default(),
     );
+    GucRegistry::define_int_guc(
+        c"pg_wasm.max_memory_pages",
+        c"Maximum WebAssembly linear memory size in 64 KiB pages for each guest store (host grow + wasm memory.grow).",
+        c"0 disables this cap (module wasm max still applies). Per-module max_memory_pages narrows this.",
+        &PG_WASM_MAX_MEMORY_PAGES,
+        0,
+        i32::MAX,
+        GucContext::Suset,
+        GucFlags::default(),
+    );
+    GucRegistry::define_int_guc(
+        c"pg_wasm.fuel_per_invocation",
+        c"Wasmtime fuel budget for each UDF call, lifecycle hook, or host entry into guest code.",
+        c"0 means unlimited fuel. Per-module fuel in load options narrows this.",
+        &PG_WASM_FUEL_PER_INVOCATION,
+        0,
+        i32::MAX,
+        GucContext::Suset,
+        GucFlags::default(),
+    );
 }
 
 #[must_use]
@@ -178,4 +206,30 @@ pub fn allow_load_from_file() -> bool {
 #[must_use]
 pub fn allowed_path_prefixes_raw() -> Option<CString> {
     PG_WASM_ALLOWED_PATH_PREFIXES.get()
+}
+
+/// Effective Wasm page cap: extension GUC intersected with optional per-module override.
+#[must_use]
+pub fn effective_max_memory_pages(module: ModuleId) -> u32 {
+    let g = PG_WASM_MAX_MEMORY_PAGES.get().max(0) as u32;
+    let m = crate::registry::module_resource_limits(module)
+        .and_then(|r| r.max_memory_pages);
+    match (g, m) {
+        (0, None) => 0,
+        (0, Some(mp)) => mp,
+        (g, None) => g,
+        (g, Some(mp)) => g.min(mp),
+    }
+}
+
+/// Fuel for one guest entry: GUC (0 = unlimited) narrowed by per-module override.
+#[must_use]
+pub fn effective_fuel_per_invocation(module: ModuleId) -> u64 {
+    let g_raw = PG_WASM_FUEL_PER_INVOCATION.get().max(0) as u64;
+    let global = if g_raw == 0 { u64::MAX } else { g_raw };
+    let m = crate::registry::module_resource_limits(module).and_then(|r| r.fuel);
+    match m {
+        None => global,
+        Some(f) => global.min(f),
+    }
 }

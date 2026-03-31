@@ -7,6 +7,7 @@ fn main() {
         "test_add",
         "test_echo_mem",
         "test_hooks",
+        "test_spin",
         "test_wasi_fd_write",
     ] {
         let path = format!("fixtures/{name}.wat");

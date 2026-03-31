@@ -9,7 +9,8 @@ use std::{
 };
 
 use wasmtime::{
-    Engine, ExternType, Instance, Linker, Memory, Module, Store, Val, ValType,
+    Config, Engine, ExternType, Instance, Linker, Memory, Module, Store, StoreLimits,
+    StoreLimitsBuilder, Val, ValType,
     component::{self, Component},
 };
 use wasmtime_wasi::{
@@ -39,21 +40,24 @@ const MEM_IO_MAX_OUT: u32 = 16 * 1024 * 1024;
 /// Per-[`Store`] state when a core module is linked with WASI preview1.
 pub struct PgWasmStoreState {
     pub wasi: WasiP1Ctx,
+    pub limits: StoreLimits,
 }
 
 /// Per-[`Store`] state for component model + WASI preview2 (`WasiView`).
 pub struct PgWasmP2StoreState {
     pub ctx: WasiCtx,
     pub table: wasmtime::component::ResourceTable,
+    pub limits: StoreLimits,
 }
 
 impl PgWasmP2StoreState {
-    fn new(policy: &HostPolicy) -> Result<Self, String> {
+    fn new(policy: &HostPolicy, limits: StoreLimits) -> Result<Self, String> {
         let mut b = WasiCtxBuilder::new();
         apply_wasi_builder_policy(&mut b, policy)?;
         Ok(Self {
             ctx: b.build(),
             table: wasmtime::component::ResourceTable::new(),
+            limits,
         })
     }
 }
@@ -76,7 +80,7 @@ enum CompiledArtifact {
 enum InstanceBundle {
     ComponentPlain {
         instance: component::Instance,
-        store: Store<()>,
+        store: Store<StoreLimits>,
     },
     ComponentWasi {
         instance: component::Instance,
@@ -84,7 +88,7 @@ enum InstanceBundle {
     },
     CorePlain {
         instance: Instance,
-        store: Store<()>,
+        store: Store<StoreLimits>,
     },
     CoreWasi {
         instance: Instance,
@@ -275,6 +279,27 @@ fn component_type_to_return(t: &component::types::Type) -> Option<PgWasmReturnDe
     })
 }
 
+const WASM_PAGE_BYTES: u64 = 65536;
+
+fn store_limits_for_module(module: ModuleId) -> StoreLimits {
+    let pages = guc::effective_max_memory_pages(module);
+    if pages == 0 {
+        StoreLimitsBuilder::new().build()
+    } else {
+        let bytes_u64 = u64::from(pages).saturating_mul(WASM_PAGE_BYTES);
+        let cap = usize::try_from(bytes_u64.min(u64::try_from(usize::MAX).unwrap_or(u64::MAX)))
+            .unwrap_or(usize::MAX);
+        StoreLimitsBuilder::new().memory_size(cap).build()
+    }
+}
+
+fn prime_store_fuel<S>(store: &mut Store<S>, module: ModuleId) -> Result<(), String> {
+    let fuel = guc::effective_fuel_per_invocation(module);
+    store
+        .set_fuel(fuel)
+        .map_err(|e| format!("pg_wasm: set_fuel: {e}"))
+}
+
 fn instantiate_bundle(module: ModuleId) -> Result<InstanceBundle, String> {
     let needs_wasi = registry::module_needs_wasi(module).ok_or_else(|| {
         format!(
@@ -314,15 +339,27 @@ fn instantiate_bundle(module: ModuleId) -> Result<InstanceBundle, String> {
         _ => {}
     }
 
+    let lim = store_limits_for_module(module);
+
     match artifact {
         CompiledArtifact::Core(arc) => {
             if !needs_wasi {
-                let mut store = Store::new(&engine, ());
+                let mut store = Store::new(&engine, lim);
+                store.limiter(|s| s);
+                prime_store_fuel(&mut store, module)?;
                 let instance = Instance::new(&mut store, &arc, &[]).map_err(|e| e.to_string())?;
                 return Ok(InstanceBundle::CorePlain { store, instance });
             }
             let wasi = build_wasi_p1_ctx(&policy)?;
-            let mut store = Store::new(&engine, PgWasmStoreState { wasi });
+            let mut store = Store::new(
+                &engine,
+                PgWasmStoreState {
+                    wasi,
+                    limits: lim,
+                },
+            );
+            store.limiter(|s| &mut s.limits);
+            prime_store_fuel(&mut store, module)?;
             let mut linker = Linker::new(&engine);
             wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |s: &mut PgWasmStoreState| {
                 &mut s.wasi
@@ -336,7 +373,9 @@ fn instantiate_bundle(module: ModuleId) -> Result<InstanceBundle, String> {
         CompiledArtifact::Component(arc) => {
             if !needs_wasi {
                 let linker = component::Linker::new(&engine);
-                let mut store = Store::new(&engine, ());
+                let mut store = Store::new(&engine, lim);
+                store.limiter(|s| s);
+                prime_store_fuel(&mut store, module)?;
                 let instance = linker
                     .instantiate(&mut store, &arc)
                     .map_err(|e| e.to_string())?;
@@ -344,8 +383,10 @@ fn instantiate_bundle(module: ModuleId) -> Result<InstanceBundle, String> {
             }
             let mut linker = component::Linker::new(&engine);
             wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(|e| e.to_string())?;
-            let state = PgWasmP2StoreState::new(&policy)?;
+            let state = PgWasmP2StoreState::new(&policy, lim)?;
             let mut store = Store::new(&engine, state);
+            store.limiter(|s| &mut s.limits);
+            prime_store_fuel(&mut store, module)?;
             let instance = linker
                 .instantiate(&mut store, &arc)
                 .map_err(|e| e.to_string())?;
@@ -1031,9 +1072,14 @@ pub struct WasmtimeBackend {
 
 impl WasmtimeBackend {
     fn empty() -> Self {
+        let mut config = Config::new();
+        config.consume_fuel(true);
+        let engine = Engine::new(&config).unwrap_or_else(|e| {
+            panic!("pg_wasm: wasmtime Engine::new failed: {e}");
+        });
         Self {
             artifacts: HashMap::new(),
-            engine: Engine::default(),
+            engine,
         }
     }
 

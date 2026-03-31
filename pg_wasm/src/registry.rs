@@ -19,7 +19,7 @@ use crate::mapping::ExportSignature;
 use crate::abi::WasmAbiKind;
 
 #[cfg(feature = "runtime_wasmtime")]
-use crate::config::PolicyOverrides;
+use crate::config::{ModuleResourceLimits, PolicyOverrides};
 
 #[cfg(feature = "runtime_wasmtime")]
 use crate::metrics::ExportStats;
@@ -115,6 +115,10 @@ static MODULE_NEEDS_WASI: OnceLock<Mutex<HashMap<ModuleId, bool>>> = OnceLock::n
 static MODULE_POLICY_OVERRIDES: OnceLock<Mutex<HashMap<ModuleId, PolicyOverrides>>> =
     OnceLock::new();
 
+#[cfg(feature = "runtime_wasmtime")]
+static MODULE_RESOURCE_LIMITS: OnceLock<Mutex<HashMap<ModuleId, ModuleResourceLimits>>> =
+    OnceLock::new();
+
 /// Persisted lifecycle hook export names (`on_unload`, `on_reconfigure`); `on_load` runs at load only.
 #[cfg(feature = "runtime_wasmtime")]
 #[derive(Clone, Debug, Default)]
@@ -175,6 +179,11 @@ fn module_policy_overrides_map() -> &'static Mutex<HashMap<ModuleId, PolicyOverr
     MODULE_POLICY_OVERRIDES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[cfg(feature = "runtime_wasmtime")]
+fn module_resource_limits_map() -> &'static Mutex<HashMap<ModuleId, ModuleResourceLimits>> {
+    MODULE_RESOURCE_LIMITS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Record detected or overridden ABI after a successful load (plan §2).
 #[cfg(feature = "runtime_wasmtime")]
 pub fn record_module_abi(module: ModuleId, abi: WasmAbiKind) {
@@ -221,6 +230,47 @@ pub fn module_policy_overrides(module: ModuleId) -> Option<PolicyOverrides> {
     g.get(&module).copied()
 }
 
+#[cfg(feature = "runtime_wasmtime")]
+pub fn record_module_resource_limits(module: ModuleId, limits: ModuleResourceLimits) {
+    let mut g = module_resource_limits_map()
+        .lock()
+        .expect("module resource limits map poisoned");
+    g.insert(module, limits);
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+#[must_use]
+pub fn module_resource_limits(module: ModuleId) -> Option<ModuleResourceLimits> {
+    let g = module_resource_limits_map()
+        .lock()
+        .expect("module resource limits map poisoned");
+    g.get(&module).copied()
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+pub fn replace_module_resource_limits(
+    module: ModuleId,
+    limits: ModuleResourceLimits,
+) -> Result<(), ()> {
+    let mut g = module_resource_limits_map()
+        .lock()
+        .expect("module resource limits map poisoned");
+    if !g.contains_key(&module) {
+        return Err(());
+    }
+    g.insert(module, limits);
+    Ok(())
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+#[must_use]
+pub fn take_module_resource_limits(module: ModuleId) -> Option<ModuleResourceLimits> {
+    let mut g = module_resource_limits_map()
+        .lock()
+        .expect("module resource limits map poisoned");
+    g.remove(&module)
+}
+
 /// Remove and return stored ABI for `module` (e.g. on unload).
 #[cfg(feature = "runtime_wasmtime")]
 #[must_use]
@@ -235,6 +285,7 @@ pub fn take_module_wasi_and_policy(module: ModuleId) {
     w.remove(&module);
     let mut p = module_policy_overrides_map().lock().expect("module policy map poisoned");
     p.remove(&module);
+    let _ = take_module_resource_limits(module);
 }
 
 #[cfg(feature = "runtime_wasmtime")]

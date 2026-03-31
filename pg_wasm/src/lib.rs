@@ -21,7 +21,7 @@ mod metrics;
 #[cfg(feature = "runtime_wasmtime")]
 mod views;
 
-pub use config::{HostPolicy, LoadOptions, PolicyOverrides};
+pub use config::{HostPolicy, LoadOptions, ModuleResourceLimits, PolicyOverrides};
 pub use mapping::{
     ExportHintMap, ExportSignature, ExportTypeHint, PgWasmArgDesc, PgWasmReturnDesc, PgWasmTypeKind,
 };
@@ -139,6 +139,11 @@ mod tests {
     #[cfg(feature = "runtime_wasmtime")]
     fn wasm_echo_mem_hex_lower() -> String {
         wasm_bytes_hex_lower(include_bytes!(concat!(env!("OUT_DIR"), "/test_echo_mem.wasm")))
+    }
+
+    #[cfg(feature = "runtime_wasmtime")]
+    fn wasm_spin_hex_lower() -> String {
+        wasm_bytes_hex_lower(include_bytes!(concat!(env!("OUT_DIR"), "/test_spin.wasm")))
     }
 
     #[cfg(feature = "runtime_wasmtime")]
@@ -350,6 +355,7 @@ mod tests {
         .expect("smoke compile");
         registry::record_module_abi(mid, crate::abi::WasmAbiKind::CoreWasm);
         registry::record_module_wasi_and_policy(mid, false, crate::config::PolicyOverrides::default());
+        registry::record_module_resource_limits(mid, crate::config::ModuleResourceLimits::default());
 
         let create_sql = concat!(
             "CREATE OR REPLACE FUNCTION public.pg_wasm_trampoline_smoke() ",
@@ -509,6 +515,73 @@ mod tests {
 
     #[cfg(feature = "runtime_wasmtime")]
     #[pg_test]
+    fn test_resource_fuel_limits_infinite_loop() {
+        let ext_nsp = extension_schema_name();
+        let hex = wasm_spin_hex_lower();
+        let opts = serde_json::json!({ "fuel": 8000 }).to_string();
+        let load_sql = format!(
+            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'sp'::text, '{}'::jsonb)",
+            opts.replace('\'', "''"),
+        );
+        let mid = Spi::get_one::<i64>(&load_sql)
+            .expect("load spin")
+            .expect("mid");
+        let msg = PgTryBuilder::new(|| match Spi::get_one::<i32>(&format!(
+            "SELECT {ext_nsp}.sp_spin()"
+        )) {
+            Err(e) => format!("{e}"),
+            Ok(Some(_)) => "__unexpected_ok__".to_string(),
+            Ok(None) => "__unexpected_null__".to_string(),
+        })
+        .catch_when(PgSqlErrorCode::ERRCODE_INTERNAL_ERROR, caught_error_message)
+        .execute();
+        assert!(
+            msg.contains("fuel") || msg.contains("trap") || msg.contains("wasm"),
+            "expected fuel/trap style error, got {msg:?}"
+        );
+        Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload spin");
+    }
+
+    #[cfg(feature = "runtime_wasmtime")]
+    #[pg_test]
+    fn test_resource_memory_cap_blocks_host_grow() {
+        let ext_nsp = extension_schema_name();
+        let hex = wasm_echo_mem_hex_lower();
+        let opts = serde_json::json!({
+            "max_memory_pages": 1,
+            "exports": {
+                "echo_mem": {
+                    "args": ["bytea"],
+                    "returns": "bytea"
+                }
+            }
+        })
+        .to_string();
+        let load_sql = format!(
+            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'lowmem'::text, '{}'::jsonb)",
+            opts.replace('\'', "''"),
+        );
+        let mid = Spi::get_one::<i64>(&load_sql)
+            .expect("load echo low mem")
+            .expect("mid");
+        let msg = PgTryBuilder::new(|| match Spi::get_one::<Vec<u8>>(&format!(
+            "SELECT {ext_nsp}.lowmem_echo_mem('\\x01'::bytea)"
+        )) {
+            Err(e) => format!("{e}"),
+            Ok(Some(_)) => "__unexpected_ok__".to_string(),
+            Ok(None) => "__unexpected_null__".to_string(),
+        })
+        .catch_when(PgSqlErrorCode::ERRCODE_INTERNAL_ERROR, caught_error_message)
+        .execute();
+        assert!(
+            msg.contains("memory") || msg.contains("grow") || msg.contains("limit"),
+            "expected memory limit error, got {msg:?}"
+        );
+        Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload lowmem");
+    }
+
+    #[cfg(feature = "runtime_wasmtime")]
+    #[pg_test]
     fn test_reconfigure_rejects_revoking_wasi_for_wasi_module() {
         let ext_nsp = extension_schema_name();
         let hex = wasm_bytes_hex_lower(include_bytes!(concat!(
@@ -581,5 +654,16 @@ mod rust_tests {
         assert_eq!(o.hook_on_load.as_deref(), Some("a"));
         assert_eq!(o.hook_on_unload.as_deref(), Some("b"));
         assert_eq!(o.hook_on_reconfigure.as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn load_options_parse_resource_limits() {
+        let j = serde_json::json!({
+            "max_memory_pages": 128,
+            "fuel": 999_999
+        });
+        let o = crate::LoadOptions::from_jsonb(Some(pgrx::JsonB(j)));
+        assert_eq!(o.resource_limits.max_memory_pages, Some(128));
+        assert_eq!(o.resource_limits.fuel, Some(999_999));
     }
 }
