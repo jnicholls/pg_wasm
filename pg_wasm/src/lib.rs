@@ -95,12 +95,20 @@ fn pg_wasm_reconfigure_module(module_id: i64, options: Option<JsonB>) {
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {
-    use pgrx::{prelude::*, spi::Spi, JsonB};
+    use pgrx::{JsonB, pg_sys::panic::CaughtError, prelude::*, spi::Spi};
 
     use crate::{
         mapping::ExportSignature,
         registry::{self, RegisteredFunction, register_fn_oid},
     };
+
+    #[cfg(feature = "runtime_wasmtime")]
+    fn caught_error_message(cause: CaughtError) -> String {
+        match cause {
+            CaughtError::PostgresError(e) | CaughtError::ErrorReport(e) => e.message().to_string(),
+            CaughtError::RustPanic { ereport, .. } => ereport.message().to_string(),
+        }
+    }
 
     #[pg_test]
     fn test_hello_pg_wasm() {
@@ -283,8 +291,11 @@ mod tests {
             mid,
             wasm,
             &crate::mapping::ExportHintMap::new(),
+            crate::abi::WasmAbiKind::CoreWasm,
         )
         .expect("smoke compile");
+        registry::record_module_abi(mid, crate::abi::WasmAbiKind::CoreWasm);
+        registry::record_module_wasi_and_policy(mid, false, crate::config::PolicyOverrides::default());
 
         let create_sql = concat!(
             "CREATE OR REPLACE FUNCTION public.pg_wasm_trampoline_smoke() ",
@@ -316,7 +327,30 @@ mod tests {
         Spi::run("DROP FUNCTION public.pg_wasm_trampoline_smoke()")
             .expect("drop pg_wasm_trampoline_smoke");
         crate::unregister_fn_oid(oid);
+        let _ = registry::take_module_abi(mid);
+        registry::take_module_wasi_and_policy(mid);
         crate::runtime::wasmtime_backend::remove_compiled_module(mid);
+    }
+
+    #[cfg(feature = "runtime_wasmtime")]
+    #[pg_test]
+    fn test_pg_wasm_load_component_add() {
+        let ext_nsp = extension_schema_name();
+        let hex = wasm_bytes_hex_lower(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/test_add.component.wasm"
+        )));
+        let load_sql = format!(
+            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'cadd'::text, NULL::jsonb)",
+        );
+        let mid = Spi::get_one::<i64>(&load_sql)
+            .expect("load component")
+            .expect("mid");
+        let v = Spi::get_one::<i32>(&format!("SELECT {ext_nsp}.cadd_add(3, 4)"))
+            .expect("call component add")
+            .expect("non-null");
+        assert_eq!(v, 7);
+        Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload component");
     }
 
     #[cfg(feature = "runtime_wasmtime")]
@@ -341,8 +375,17 @@ mod tests {
         let load_sql = format!(
             "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'wasi_x'::text, NULL::jsonb)",
         );
-        let err = Spi::get_one::<i64>(&load_sql).expect_err("load should fail");
-        let msg = format!("{err}");
+        let msg = PgTryBuilder::new(|| match Spi::get_one::<i64>(&load_sql) {
+            Err(e) => format!("{e}"),
+            Ok(Some(_)) => "__unexpected_ok__".to_string(),
+            Ok(None) => "__unexpected_null__".to_string(),
+        })
+        .catch_when(PgSqlErrorCode::ERRCODE_INTERNAL_ERROR, caught_error_message)
+        .execute();
+        assert!(
+            msg != "__unexpected_ok__" && msg != "__unexpected_null__",
+            "load should have failed, got {msg:?}"
+        );
         assert!(
             msg.contains("WASI") || msg.contains("wasi"),
             "unexpected error: {msg}"
@@ -393,8 +436,16 @@ mod tests {
         let rc_sql = format!(
             "SELECT {ext_nsp}.pg_wasm_reconfigure_module({mid}, '{{\"allow_wasi\": false}}'::jsonb)",
         );
-        let err = Spi::run(&rc_sql).expect_err("reconfigure should fail");
-        let msg = format!("{err}");
+        let msg = PgTryBuilder::new(|| match Spi::run(&rc_sql) {
+            Err(e) => format!("{e}"),
+            Ok(()) => "__unexpected_ok__".to_string(),
+        })
+        .catch_when(PgSqlErrorCode::ERRCODE_INTERNAL_ERROR, caught_error_message)
+        .execute();
+        assert_ne!(
+            msg, "__unexpected_ok__",
+            "reconfigure should have failed, got ok"
+        );
         assert!(
             msg.contains("WASI") || msg.contains("policy"),
             "unexpected error: {msg}"

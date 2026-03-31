@@ -142,9 +142,9 @@ fn buffer_output_datum(ret: &PgWasmReturnDesc, out: &[u8]) -> pg_sys::Datum {
 #[cfg(feature = "runtime_wasmtime")]
 fn invoke_scalar(reg: &crate::registry::RegisteredFunction, fcinfo: pg_sys::FunctionCallInfo) -> pg_sys::Datum {
     use crate::runtime::wasmtime_backend::{
-        call_f32_arity0, call_f32_arity1, call_f32_arity2, call_f64_arity0, call_f64_arity1,
-        call_f64_arity2, call_i32_arity0, call_i32_arity1, call_i32_arity2, call_i64_arity0,
-        call_i64_arity1,
+        call_bool_result_arity0, call_bool_result_arity1, call_bool_result_arity2, call_f32_arity0,
+        call_f32_arity1, call_f32_arity2, call_f64_arity0, call_f64_arity1, call_f64_arity2,
+        call_i32_arity0, call_i32_arity1, call_i32_arity2, call_i64_arity0, call_i64_arity1,
     };
     let mid = reg.module_id;
     let name = reg.export_name.as_str();
@@ -166,8 +166,8 @@ fn invoke_scalar(reg: &crate::registry::RegisteredFunction, fcinfo: pg_sys::Func
                 .unwrap_or_else(|| error!("pg_wasm: int2 into_datum failed"))
         }
         ([], _, PgWasmTypeKind::Bool) => {
-            let v = call_i32_arity0(mid, name).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
-            (v != 0).into_datum()
+            let v = call_bool_result_arity0(mid, name).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+            v.into_datum()
                 .unwrap_or_else(|| error!("pg_wasm: bool into_datum failed"))
         }
         ([], _, PgWasmTypeKind::I64) => {
@@ -211,9 +211,9 @@ fn invoke_scalar(reg: &crate::registry::RegisteredFunction, fcinfo: pg_sys::Func
                 (_, PgWasmTypeKind::Bool, _, PgWasmTypeKind::Bool) => {
                     let x = unsafe { pg_getarg::<bool>(fcinfo, 0) }
                         .expect("pg_wasm: NULL strict arg");
-                    let v = call_i32_arity1(mid, name, if x { 1 } else { 0 })
+                    let v = call_bool_result_arity1(mid, name, x)
                         .unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
-                    (v != 0).into_datum()
+                    v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: bool into_datum failed"))
                 }
                 (_, PgWasmTypeKind::I64, _, PgWasmTypeKind::I64) => {
@@ -262,14 +262,9 @@ fn invoke_scalar(reg: &crate::registry::RegisteredFunction, fcinfo: pg_sys::Func
                 (PgWasmTypeKind::Bool, PgWasmTypeKind::Bool, PgWasmTypeKind::Bool) => {
                     let x = unsafe { pg_getarg::<bool>(fcinfo, 0) }.expect("pg_wasm: NULL arg");
                     let y = unsafe { pg_getarg::<bool>(fcinfo, 1) }.expect("pg_wasm: NULL arg");
-                    let v = call_i32_arity2(
-                        mid,
-                        name,
-                        if x { 1 } else { 0 },
-                        if y { 1 } else { 0 },
-                    )
-                    .unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
-                    (v != 0).into_datum()
+                    let v = call_bool_result_arity2(mid, name, x, y)
+                        .unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: bool into_datum failed"))
                 }
                 (PgWasmTypeKind::F32, PgWasmTypeKind::F32, PgWasmTypeKind::F32) => {

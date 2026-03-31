@@ -81,6 +81,13 @@ pub fn record_module_abi(module: ModuleId, abi: WasmAbiKind) {
 }
 
 #[cfg(feature = "runtime_wasmtime")]
+#[must_use]
+pub fn module_abi(module: ModuleId) -> Option<WasmAbiKind> {
+    let g = module_abi_map().lock().expect("module abi map poisoned");
+    g.get(&module).copied()
+}
+
+#[cfg(feature = "runtime_wasmtime")]
 pub fn record_module_wasi_and_policy(module: ModuleId, needs_wasi: bool, policy: PolicyOverrides) {
     let mut w = module_needs_wasi_map().lock().expect("module wasi map poisoned");
     w.insert(module, needs_wasi);

@@ -53,15 +53,6 @@ pub fn load_from_bytes(
     enforce_size_limit(wasm.len())?;
     validate_wasm_prefix(wasm)?;
     let opts = LoadOptions::from_jsonb(options);
-    let needs_wasi = abi::wasm_imports_wasi_host(wasm)
-        .map_err(|e| LoadError::Message(e.to_string()))?;
-    let effective = effective_host_policy(&opts.policy);
-    if needs_wasi && !effective.allow_wasi {
-        return Err(LoadError::Message(
-            "wasm imports WASI preview1 but effective policy denies WASI (enable pg_wasm.allow_wasi and ensure per-module allow_wasi is not false)"
-                .into(),
-        ));
-    }
     let abi = match opts.abi_override.as_deref() {
         Some(s) => abi::parse_abi_override(s).ok_or_else(|| {
             LoadError::Message(format!(
@@ -73,12 +64,7 @@ pub fn load_from_bytes(
     };
 
     match abi {
-        WasmAbiKind::ComponentModel => {
-            return Err(LoadError::Message(
-                "WebAssembly component model detected; pg_wasm does not run components yet"
-                    .into(),
-            ));
-        }
+        WasmAbiKind::ComponentModel => {}
         WasmAbiKind::Extism => {
             return Err(LoadError::Message(
                 "Extism plugin ABI detected; pg_wasm only loads core wasm until Extism is integrated"
@@ -93,10 +79,20 @@ pub fn load_from_bytes(
     let prefix = module_sql_prefix(module_name, id)?;
 
     let export_hints = opts.export_hints().map_err(LoadError::Message)?;
-    let exports = match wasmtime_backend::compile_store_and_list_exports(id, wasm, &export_hints) {
-        Ok(e) => e,
-        Err(e) => return Err(LoadError::Message(e)),
-    };
+    let (exports, needs_wasi) =
+        match wasmtime_backend::compile_store_and_list_exports(id, wasm, &export_hints, abi) {
+            Ok(x) => x,
+            Err(e) => return Err(LoadError::Message(e)),
+        };
+
+    let effective = effective_host_policy(&opts.policy);
+    if needs_wasi && !effective.allow_wasi {
+        wasmtime_backend::remove_compiled_module(id);
+        return Err(LoadError::Message(
+            "wasm imports WASI but effective policy denies WASI (enable pg_wasm.allow_wasi and ensure per-module allow_wasi is not false)"
+                .into(),
+        ));
+    }
 
     if exports.is_empty() {
         wasmtime_backend::remove_compiled_module(id);
@@ -306,19 +302,16 @@ fn enforce_size_limit(n: usize) -> Result<(), LoadError> {
 fn validate_wasm_prefix(bytes: &[u8]) -> Result<(), LoadError> {
     if bytes.len() < 8 {
         return Err(LoadError::Message(
-            "input is too small to be a wasm module".into(),
+            "input is too small to be a wasm module or component".into(),
         ));
     }
     if &bytes[..4] != WASM_MAGIC {
         return Err(LoadError::Message("missing wasm magic \\0asm".into()));
     }
-    let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-    if version != 1 {
-        return Err(LoadError::Message(format!(
-            "unsupported wasm version {version} (expected 1)"
-        )));
+    match abi::detect_wasm_abi(bytes).map_err(|e| LoadError::Message(e.to_string()))? {
+        WasmAbiKind::CoreWasm | WasmAbiKind::ComponentModel => Ok(()),
+        WasmAbiKind::Extism => Ok(()),
     }
-    Ok(())
 }
 
 fn extension_schema_name_spi() -> Result<String, LoadError> {
