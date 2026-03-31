@@ -13,6 +13,9 @@ use pgrx::pg_sys::Oid;
 use crate::mapping::ExportSignature;
 
 #[cfg(feature = "runtime_wasmtime")]
+use crate::abi::WasmAbiKind;
+
+#[cfg(feature = "runtime_wasmtime")]
 static NEXT_MODULE_ID: AtomicI64 = AtomicI64::new(1);
 
 /// Stable handle for a loaded module (bigint / sequence in SQL).
@@ -33,6 +36,9 @@ static FN_OID_MAP: OnceLock<Mutex<HashMap<Oid, RegisteredFunction>>> = OnceLock:
 #[cfg(feature = "runtime_wasmtime")]
 static MODULE_PROCS: OnceLock<Mutex<HashMap<ModuleId, Vec<Oid>>>> = OnceLock::new();
 
+#[cfg(feature = "runtime_wasmtime")]
+static MODULE_ABI: OnceLock<Mutex<HashMap<ModuleId, WasmAbiKind>>> = OnceLock::new();
+
 fn fn_oid_map() -> &'static Mutex<HashMap<Oid, RegisteredFunction>> {
     FN_OID_MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -40,6 +46,26 @@ fn fn_oid_map() -> &'static Mutex<HashMap<Oid, RegisteredFunction>> {
 #[cfg(feature = "runtime_wasmtime")]
 fn module_procs() -> &'static Mutex<HashMap<ModuleId, Vec<Oid>>> {
     MODULE_PROCS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+fn module_abi_map() -> &'static Mutex<HashMap<ModuleId, WasmAbiKind>> {
+    MODULE_ABI.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Record detected or overridden ABI after a successful load (plan §2).
+#[cfg(feature = "runtime_wasmtime")]
+pub fn record_module_abi(module: ModuleId, abi: WasmAbiKind) {
+    let mut g = module_abi_map().lock().expect("module abi map poisoned");
+    g.insert(module, abi);
+}
+
+/// Remove and return stored ABI for `module` (e.g. on unload).
+#[cfg(feature = "runtime_wasmtime")]
+#[must_use]
+pub fn take_module_abi(module: ModuleId) -> Option<WasmAbiKind> {
+    let mut g = module_abi_map().lock().expect("module abi map poisoned");
+    g.remove(&module)
 }
 
 #[cfg(feature = "runtime_wasmtime")]

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use pgrx::{prelude::*, spi::Spi, JsonB};
 
 use crate::{
+    abi::{self, WasmAbiKind},
     config::LoadOptions,
     guc::{allow_load_from_file, allowed_path_prefixes_raw, max_module_bytes, module_path_cstr},
     proc_reg::{self, RegisterError},
@@ -48,7 +49,31 @@ pub fn load_from_bytes(
     enforce_size_limit(wasm.len())?;
     validate_wasm_prefix(wasm)?;
     let opts = LoadOptions::from_jsonb(options);
-    let _ = opts;
+    let abi = match opts.abi_override.as_deref() {
+        Some(s) => abi::parse_abi_override(s).ok_or_else(|| {
+            LoadError::Message(format!(
+                "pg_wasm_load: unknown abi override {s:?} (use core, extism, or component)"
+            ))
+        })?,
+        None => abi::detect_wasm_abi(wasm)
+            .map_err(|e| LoadError::Message(e.to_string()))?,
+    };
+
+    match abi {
+        WasmAbiKind::ComponentModel => {
+            return Err(LoadError::Message(
+                "WebAssembly component model detected; pg_wasm does not run components yet"
+                    .into(),
+            ));
+        }
+        WasmAbiKind::Extism => {
+            return Err(LoadError::Message(
+                "Extism plugin ABI detected; pg_wasm only loads core wasm until Extism is integrated"
+                    .into(),
+            ));
+        }
+        WasmAbiKind::CoreWasm => {}
+    }
 
     let schema = extension_schema_name_spi()?;
     let id = registry::alloc_module_id();
@@ -101,6 +126,7 @@ pub fn load_from_bytes(
         oids.push(oid);
     }
 
+    registry::record_module_abi(id, abi);
     Ok(id)
 }
 
@@ -268,6 +294,7 @@ pub fn unload_module(id: i64) -> Result<(), LoadError> {
     for oid in oids {
         proc_reg::drop_wasm_trampoline_proc(oid);
     }
+    let _ = registry::take_module_abi(mid);
     wasmtime_backend::remove_compiled_module(mid);
     Ok(())
 }

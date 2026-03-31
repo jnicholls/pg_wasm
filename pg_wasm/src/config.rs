@@ -7,6 +7,8 @@ use pgrx::JsonB;
 pub struct LoadOptions {
     /// Preferred runtime when multiple backends are compiled in (`wasmtime`, `wasmer`, `extism`).
     pub runtime: Option<String>,
+    /// Override ABI detection: `core`, `extism`, or `component` (see plan §2).
+    pub abi_override: Option<String>,
     /// Optional export names for lifecycle hooks (`on_load`, `on_unload`, `on_reconfigure`).
     pub hook_on_load: Option<String>,
     pub hook_on_unload: Option<String>,
@@ -18,12 +20,19 @@ pub struct LoadOptions {
 impl LoadOptions {
     #[must_use]
     pub fn from_jsonb(j: Option<JsonB>) -> Self {
-        let Some(j) = j else {
+        let Some(JsonB(val)) = j else {
             return Self::default();
         };
-        // Full JSON parsing is implemented when load APIs land; keep shape and stash blob.
         Self {
-            raw: Some(j),
+            runtime: val
+                .get("runtime")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            abi_override: val
+                .get("abi")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            raw: Some(JsonB(val)),
             ..Default::default()
         }
     }

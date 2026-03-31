@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: abi-detection
     content: ABI detection order Extism then WIT component then core; branch loading path and store ABI in module metadata.
-    status: pending
+    status: completed
   - id: type-mapping-extended
     content: Extend mapping to text, JSONB, simple UDT to bytes or JSON; optional WIT-driven layout for components.
     status: pending

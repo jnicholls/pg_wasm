@@ -3,6 +3,8 @@ use pgrx::prelude::*;
 #[cfg(feature = "runtime_wasmtime")]
 use pgrx::JsonB;
 
+#[cfg(feature = "runtime_wasmtime")]
+mod abi;
 mod config;
 #[cfg(feature = "runtime_wasmtime")]
 mod guc;
@@ -28,6 +30,8 @@ pub use trampoline::TRAMPOLINE_PG_SYMBOL;
 pub use runtime::extism_backend::ExtismBackend;
 #[cfg(feature = "runtime_wasmer")]
 pub use runtime::wasmer_backend::WasmerBackend;
+#[cfg(feature = "runtime_wasmtime")]
+pub use abi::WasmAbiKind;
 #[cfg(feature = "runtime_wasmtime")]
 pub use runtime::wasmtime_backend::WasmtimeBackend;
 

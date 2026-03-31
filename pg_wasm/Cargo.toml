@@ -8,7 +8,7 @@ edition.workspace = true
 crate-type = ["cdylib", "lib"]
 
 [build-dependencies]
-wat = "1"
+wat.workspace = true
 
 [[bin]]
 name = "pgrx_embed_pg_wasm"
@@ -38,3 +38,4 @@ extism = { workspace = true, optional = true }
 
 [dev-dependencies]
 pgrx-tests.workspace = true
+wat.workspace = true
