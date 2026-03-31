@@ -25,7 +25,7 @@ todos:
     status: completed
   - id: metrics-views
     content: Counters/timings and optional resource stats; shared or process memory; expose pg_wasm_* views.
-    status: pending
+    status: completed
   - id: optional-hooks
     content: Configurable on_load, on_unload, on_reconfigure export names; call at lifecycle points.
     status: pending

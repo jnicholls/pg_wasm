@@ -13,6 +13,22 @@ pub struct PolicyOverrides {
     pub allow_wasi: Option<bool>,
 }
 
+impl PolicyOverrides {
+    /// JSON object for introspection helpers (e.g. `pg_wasm_modules` table function).
+    #[cfg(feature = "runtime_wasmtime")]
+    #[must_use]
+    pub fn to_json_string(self) -> String {
+        serde_json::json!({
+            "allow_env": self.allow_env,
+            "allow_fs_read": self.allow_fs_read,
+            "allow_fs_write": self.allow_fs_write,
+            "allow_network": self.allow_network,
+            "allow_wasi": self.allow_wasi,
+        })
+        .to_string()
+    }
+}
+
 /// Per-module and load-time options passed as JSONB to `pg_wasm_load` (see plan §8–9).
 #[derive(Debug, Default)]
 pub struct LoadOptions {

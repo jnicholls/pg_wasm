@@ -16,14 +16,19 @@ mod trampoline;
 
 #[cfg(feature = "runtime_wasmtime")]
 mod load;
+#[cfg(feature = "runtime_wasmtime")]
+mod metrics;
+#[cfg(feature = "runtime_wasmtime")]
+mod views;
 
 pub use config::{HostPolicy, LoadOptions, PolicyOverrides};
 pub use mapping::{
     ExportHintMap, ExportSignature, ExportTypeHint, PgWasmArgDesc, PgWasmReturnDesc, PgWasmTypeKind,
 };
-pub use registry::{
-    ModuleId, RegisteredFunction, lookup_by_fn_oid, register_fn_oid, unregister_fn_oid,
-};
+pub use registry::{ModuleId, RegisteredFunction, lookup_by_fn_oid, register_fn_oid, unregister_fn_oid};
+
+#[cfg(feature = "runtime_wasmtime")]
+pub use registry::ModuleCatalogEntry;
 pub use runtime::{RuntimeKind, StubWasmBackend, WasmRuntimeBackend};
 pub use proc_reg::{RegisterError, drop_wasm_trampoline_proc, register_wasm_trampoline_proc};
 pub use trampoline::TRAMPOLINE_PG_SYMBOL;
@@ -144,6 +149,55 @@ mod tests {
             write!(&mut s, "{b:02x}").unwrap();
         }
         s
+    }
+
+    #[cfg(feature = "runtime_wasmtime")]
+    #[pg_test]
+    fn test_pg_wasm_metrics_and_table_functions() {
+        let ext_nsp = extension_schema_name();
+        let hex = wasm_fixture_hex_lower();
+        let load_sql = format!(
+            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'met'::text, NULL::jsonb)",
+        );
+        let mid = Spi::get_one::<i64>(&load_sql)
+            .expect("load spi")
+            .expect("module id");
+        let _ = Spi::get_one::<i32>(&format!("SELECT {ext_nsp}.met_add(2, 3)"))
+            .expect("add")
+            .expect("non-null");
+        let _ = Spi::get_one::<i32>(&format!("SELECT {ext_nsp}.met_forty_two()"))
+            .expect("42")
+            .expect("non-null");
+
+        let inv = Spi::get_one::<i64>(&format!(
+            "SELECT total_invocations FROM {ext_nsp}.pg_wasm_modules() WHERE module_id = {}",
+            mid
+        ))
+        .expect("modules spi")
+        .expect("inv col");
+        assert!(
+            inv >= 2,
+            "expected at least 2 wasm invocations recorded on this backend, got {inv}"
+        );
+
+        let fn_rows: i64 = Spi::get_one(&format!(
+            "SELECT count(*)::bigint FROM {ext_nsp}.pg_wasm_functions() WHERE module_id = {}",
+            mid
+        ))
+        .expect("fn count")
+        .expect("cnt");
+        assert!(fn_rows >= 2, "expected >= 2 pg_wasm_functions rows");
+
+        let add_inv = Spi::get_one::<i64>(&format!(
+            "SELECT invocations FROM {ext_nsp}.pg_wasm_stats() \
+             WHERE module_id = {} AND wasm_export_name = 'add'",
+            mid
+        ))
+        .expect("stats add")
+        .expect("add inv");
+        assert_eq!(add_inv, 1);
+
+        Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload");
     }
 
     #[cfg(feature = "runtime_wasmtime")]
@@ -316,6 +370,7 @@ mod tests {
                 module_id: mid,
                 export_name: "forty_two".into(),
                 signature: ExportSignature::default(),
+                metrics: crate::metrics::alloc_export_stats(),
             },
         );
 

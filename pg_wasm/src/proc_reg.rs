@@ -274,6 +274,14 @@ fn pg_wasm_debug_register_zeroary_i32(
     if let Err(e) = assert_sql_identifier(export_name) {
         error!("{e}");
     }
+    #[cfg(feature = "runtime_wasmtime")]
+    let reg = RegisteredFunction {
+        module_id: ModuleId(module_id),
+        export_name: export_name.to_string(),
+        signature: ExportSignature::default(),
+        metrics: crate::metrics::alloc_export_stats(),
+    };
+    #[cfg(not(feature = "runtime_wasmtime"))]
     let reg = RegisteredFunction {
         module_id: ModuleId(module_id),
         export_name: export_name.to_string(),
@@ -296,6 +304,14 @@ fn pg_wasm_debug_register_binary_i32(
     if let Err(e) = assert_sql_identifier(export_name) {
         error!("{e}");
     }
+    #[cfg(feature = "runtime_wasmtime")]
+    let reg = RegisteredFunction {
+        module_id: ModuleId(module_id),
+        export_name: export_name.to_string(),
+        signature: ExportSignature::default(),
+        metrics: crate::metrics::alloc_export_stats(),
+    };
+    #[cfg(not(feature = "runtime_wasmtime"))]
     let reg = RegisteredFunction {
         module_id: ModuleId(module_id),
         export_name: export_name.to_string(),

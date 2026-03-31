@@ -36,6 +36,9 @@ pub static PG_WASM_ALLOW_WASI_FS_WRITE: GucSetting<bool> = GucSetting::<bool>::n
 /// Allow WASI sockets / inherited network (`pg_wasm.allow_wasi_network`).
 pub static PG_WASM_ALLOW_WASI_NETWORK: GucSetting<bool> = GucSetting::<bool>::new(false);
 
+/// When off, per-call timing and invocation counters are not updated (`pg_wasm.collect_metrics`).
+pub static PG_WASM_COLLECT_METRICS: GucSetting<bool> = GucSetting::<bool>::new(true);
+
 pub fn init() {
     GucRegistry::define_string_guc(
         c"pg_wasm.module_path",
@@ -111,6 +114,19 @@ pub fn init() {
         GucContext::Suset,
         GucFlags::default(),
     );
+    GucRegistry::define_bool_guc(
+        c"pg_wasm.collect_metrics",
+        c"When on, pg_wasm records per-export invocation counts, errors, and timings in this backend process.",
+        c"When off, the trampoline skips timing updates (slightly lower overhead).",
+        &PG_WASM_COLLECT_METRICS,
+        GucContext::Suset,
+        GucFlags::default(),
+    );
+}
+
+#[must_use]
+pub fn collect_metrics() -> bool {
+    PG_WASM_COLLECT_METRICS.get()
 }
 
 #[must_use]

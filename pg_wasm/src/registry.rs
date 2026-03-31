@@ -6,7 +6,10 @@ use std::{
 };
 
 #[cfg(feature = "runtime_wasmtime")]
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicI64, Ordering},
+};
 
 use pgrx::pg_sys::Oid;
 
@@ -17,6 +20,9 @@ use crate::abi::WasmAbiKind;
 
 #[cfg(feature = "runtime_wasmtime")]
 use crate::config::PolicyOverrides;
+
+#[cfg(feature = "runtime_wasmtime")]
+use crate::metrics::ExportStats;
 
 #[cfg(feature = "runtime_wasmtime")]
 static NEXT_MODULE_ID: AtomicI64 = AtomicI64::new(1);
@@ -31,6 +37,66 @@ pub struct RegisteredFunction {
     pub module_id: ModuleId,
     pub export_name: String,
     pub signature: ExportSignature,
+    #[cfg(feature = "runtime_wasmtime")]
+    pub metrics: Arc<ExportStats>,
+}
+
+/// SQL/catalog row for a loaded module (UDF name prefix, runtime hint).
+#[cfg(feature = "runtime_wasmtime")]
+#[derive(Clone, Debug)]
+pub struct ModuleCatalogEntry {
+    pub name_prefix: String,
+    pub runtime: String,
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+static MODULE_CATALOG: OnceLock<Mutex<HashMap<ModuleId, ModuleCatalogEntry>>> = OnceLock::new();
+
+#[cfg(feature = "runtime_wasmtime")]
+fn module_catalog_map() -> &'static Mutex<HashMap<ModuleId, ModuleCatalogEntry>> {
+    MODULE_CATALOG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+pub fn record_module_catalog(module: ModuleId, entry: ModuleCatalogEntry) {
+    let mut g = module_catalog_map()
+        .lock()
+        .expect("module catalog map poisoned");
+    g.insert(module, entry);
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+#[must_use]
+pub fn take_module_catalog(module: ModuleId) -> Option<ModuleCatalogEntry> {
+    let mut g = module_catalog_map()
+        .lock()
+        .expect("module catalog map poisoned");
+    g.remove(&module)
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+#[must_use]
+pub fn module_catalog(module: ModuleId) -> Option<ModuleCatalogEntry> {
+    let g = module_catalog_map()
+        .lock()
+        .expect("module catalog map poisoned");
+    g.get(&module).cloned()
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+#[must_use]
+pub fn list_module_catalog() -> Vec<(ModuleId, ModuleCatalogEntry)> {
+    let g = module_catalog_map()
+        .lock()
+        .expect("module catalog map poisoned");
+    g.iter().map(|(k, v)| (*k, v.clone())).collect()
+}
+
+#[cfg(feature = "runtime_wasmtime")]
+#[must_use]
+pub fn iter_fn_oid_entries() -> Vec<(Oid, RegisteredFunction)> {
+    let g = fn_oid_map().lock().expect("fn_oid map poisoned");
+    g.iter().map(|(oid, reg)| (*oid, reg.clone())).collect()
 }
 
 static FN_OID_MAP: OnceLock<Mutex<HashMap<Oid, RegisteredFunction>>> = OnceLock::new();

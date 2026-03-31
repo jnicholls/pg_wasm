@@ -7,6 +7,23 @@ use pgrx::{fcinfo::pg_getarg, pg_sys, prelude::*, JsonB};
 
 use crate::mapping::{ExportSignature, PgWasmReturnDesc, PgWasmTypeKind};
 
+#[cfg(feature = "runtime_wasmtime")]
+macro_rules! wasm_try {
+    ($reg:expr, $call:expr) => {{
+        let t0 = $crate::metrics::timer_start();
+        match $call {
+            Ok(v) => {
+                $crate::metrics::timer_finish_ok(&$reg.metrics, t0);
+                v
+            }
+            Err(e) => {
+                $crate::metrics::timer_finish_err(&$reg.metrics, t0);
+                error!("pg_wasm: wasm: {e}");
+            }
+        }
+    }};
+}
+
 /// `CREATE FUNCTION … AS '$libdir/pg_wasm', '…'` link name for the trampoline body.
 pub const TRAMPOLINE_PG_SYMBOL: &str = "pg_wasm_udf_trampoline";
 
@@ -103,14 +120,14 @@ fn invoke_buffer_io(
         }
         _ => error!("pg_wasm: invalid buffer signature"),
     };
-    let out = match crate::runtime::wasmtime_backend::call_mem_in_out(
-        reg.module_id,
-        &reg.export_name,
-        &input,
-    ) {
-        Ok(b) => b,
-        Err(e) => error!("pg_wasm: wasm invoke failed: {e}"),
-    };
+    let out = wasm_try!(
+        reg,
+        crate::runtime::wasmtime_backend::call_mem_in_out(
+            reg.module_id,
+            &reg.export_name,
+            &input,
+        )
+    );
     buffer_output_datum(&reg.signature.ret, &out)
 }
 
@@ -156,32 +173,32 @@ fn invoke_scalar(reg: &crate::registry::RegisteredFunction, fcinfo: pg_sys::Func
         sig.ret.kind,
     ) {
         ([], _, PgWasmTypeKind::I32) if sig.ret.pg_oid == pg_sys::INT4OID => {
-            let v = call_i32_arity0(mid, name).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+            let v = wasm_try!(reg, call_i32_arity0(mid, name));
             v.into_datum()
                 .unwrap_or_else(|| error!("pg_wasm: int4 into_datum failed"))
         }
         ([], _, PgWasmTypeKind::I32) if sig.ret.pg_oid == pg_sys::INT2OID => {
-            let v = call_i32_arity0(mid, name).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+            let v = wasm_try!(reg, call_i32_arity0(mid, name));
             (v as i16).into_datum()
                 .unwrap_or_else(|| error!("pg_wasm: int2 into_datum failed"))
         }
         ([], _, PgWasmTypeKind::Bool) => {
-            let v = call_bool_result_arity0(mid, name).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+            let v = wasm_try!(reg, call_bool_result_arity0(mid, name));
             v.into_datum()
                 .unwrap_or_else(|| error!("pg_wasm: bool into_datum failed"))
         }
         ([], _, PgWasmTypeKind::I64) => {
-            let v = call_i64_arity0(mid, name).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+            let v = wasm_try!(reg, call_i64_arity0(mid, name));
             v.into_datum()
                 .unwrap_or_else(|| error!("pg_wasm: int8 into_datum failed"))
         }
         ([], _, PgWasmTypeKind::F32) => {
-            let v = call_f32_arity0(mid, name).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+            let v = wasm_try!(reg, call_f32_arity0(mid, name));
             v.into_datum()
                 .unwrap_or_else(|| error!("pg_wasm: float4 into_datum failed"))
         }
         ([], _, PgWasmTypeKind::F64) => {
-            let v = call_f64_arity0(mid, name).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+            let v = wasm_try!(reg, call_f64_arity0(mid, name));
             v.into_datum()
                 .unwrap_or_else(|| error!("pg_wasm: float8 into_datum failed"))
         }
@@ -196,44 +213,42 @@ fn invoke_scalar(reg: &crate::registry::RegisteredFunction, fcinfo: pg_sys::Func
                 (pg_sys::INT4OID, PgWasmTypeKind::I32, pg_sys::INT4OID, PgWasmTypeKind::I32) => {
                     let x = unsafe { pg_getarg::<i32>(fcinfo, 0) }
                         .expect("pg_wasm: NULL strict arg");
-                    let v = call_i32_arity1(mid, name, x).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_i32_arity1(mid, name, x));
                     v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: int4 into_datum failed"))
                 }
                 (pg_sys::INT2OID, PgWasmTypeKind::I32, pg_sys::INT2OID, PgWasmTypeKind::I32) => {
                     let x = unsafe { pg_getarg::<i16>(fcinfo, 0) }
                         .expect("pg_wasm: NULL strict arg");
-                    let v = call_i32_arity1(mid, name, x as i32)
-                        .unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_i32_arity1(mid, name, x as i32));
                     (v as i16).into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: int2 into_datum failed"))
                 }
                 (_, PgWasmTypeKind::Bool, _, PgWasmTypeKind::Bool) => {
                     let x = unsafe { pg_getarg::<bool>(fcinfo, 0) }
                         .expect("pg_wasm: NULL strict arg");
-                    let v = call_bool_result_arity1(mid, name, x)
-                        .unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_bool_result_arity1(mid, name, x));
                     v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: bool into_datum failed"))
                 }
                 (_, PgWasmTypeKind::I64, _, PgWasmTypeKind::I64) => {
                     let x = unsafe { pg_getarg::<i64>(fcinfo, 0) }
                         .expect("pg_wasm: NULL strict arg");
-                    let v = call_i64_arity1(mid, name, x).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_i64_arity1(mid, name, x));
                     v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: int8 into_datum failed"))
                 }
                 (_, PgWasmTypeKind::F32, _, PgWasmTypeKind::F32) => {
                     let x = unsafe { pg_getarg::<f32>(fcinfo, 0) }
                         .expect("pg_wasm: NULL strict arg");
-                    let v = call_f32_arity1(mid, name, x).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_f32_arity1(mid, name, x));
                     v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: float4 into_datum failed"))
                 }
                 (_, PgWasmTypeKind::F64, _, PgWasmTypeKind::F64) => {
                     let x = unsafe { pg_getarg::<f64>(fcinfo, 0) }
                         .expect("pg_wasm: NULL strict arg");
-                    let v = call_f64_arity1(mid, name, x).unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_f64_arity1(mid, name, x));
                     v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: float8 into_datum failed"))
                 }
@@ -254,32 +269,28 @@ fn invoke_scalar(reg: &crate::registry::RegisteredFunction, fcinfo: pg_sys::Func
                 {
                     let x = unsafe { pg_getarg::<i32>(fcinfo, 0) }.expect("pg_wasm: NULL arg");
                     let y = unsafe { pg_getarg::<i32>(fcinfo, 1) }.expect("pg_wasm: NULL arg");
-                    let v = call_i32_arity2(mid, name, x, y)
-                        .unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_i32_arity2(mid, name, x, y));
                     v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: int4 into_datum failed"))
                 }
                 (PgWasmTypeKind::Bool, PgWasmTypeKind::Bool, PgWasmTypeKind::Bool) => {
                     let x = unsafe { pg_getarg::<bool>(fcinfo, 0) }.expect("pg_wasm: NULL arg");
                     let y = unsafe { pg_getarg::<bool>(fcinfo, 1) }.expect("pg_wasm: NULL arg");
-                    let v = call_bool_result_arity2(mid, name, x, y)
-                        .unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_bool_result_arity2(mid, name, x, y));
                     v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: bool into_datum failed"))
                 }
                 (PgWasmTypeKind::F32, PgWasmTypeKind::F32, PgWasmTypeKind::F32) => {
                     let x = unsafe { pg_getarg::<f32>(fcinfo, 0) }.expect("pg_wasm: NULL arg");
                     let y = unsafe { pg_getarg::<f32>(fcinfo, 1) }.expect("pg_wasm: NULL arg");
-                    let v = call_f32_arity2(mid, name, x, y)
-                        .unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_f32_arity2(mid, name, x, y));
                     v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: float4 into_datum failed"))
                 }
                 (PgWasmTypeKind::F64, PgWasmTypeKind::F64, PgWasmTypeKind::F64) => {
                     let x = unsafe { pg_getarg::<f64>(fcinfo, 0) }.expect("pg_wasm: NULL arg");
                     let y = unsafe { pg_getarg::<f64>(fcinfo, 1) }.expect("pg_wasm: NULL arg");
-                    let v = call_f64_arity2(mid, name, x, y)
-                        .unwrap_or_else(|e| error!("pg_wasm: wasm: {e}"));
+                    let v = wasm_try!(reg, call_f64_arity2(mid, name, x, y));
                     v.into_datum()
                         .unwrap_or_else(|| error!("pg_wasm: float8 into_datum failed"))
                 }

@@ -453,11 +453,11 @@ pub fn call_mem_in_out(
         InstanceBundle::CorePlain {
             mut store,
             instance,
-        } => call_mem_in_out_impl(&mut store, &instance, export, input),
+        } => call_mem_in_out_impl(module, &mut store, &instance, export, input),
         InstanceBundle::CoreWasi {
             mut store,
             instance,
-        } => call_mem_in_out_impl(&mut store, &instance, export, input),
+        } => call_mem_in_out_impl(module, &mut store, &instance, export, input),
         InstanceBundle::ComponentPlain { .. } | InstanceBundle::ComponentWasi { .. } => Err(
             "pg_wasm: bytea/text/jsonb buffer calling convention is only supported for core WebAssembly modules"
                 .into(),
@@ -466,6 +466,7 @@ pub fn call_mem_in_out(
 }
 
 fn call_mem_in_out_impl<S>(
+    module: ModuleId,
     store: &mut Store<S>,
     instance: &Instance,
     export: &str,
@@ -506,6 +507,7 @@ fn call_mem_in_out_impl<S>(
     memory
         .read(&mut *store, out_base, &mut out)
         .map_err(|e| e.to_string())?;
+    after_guest_call_core(module, store, instance);
     Ok(out)
 }
 
@@ -521,6 +523,13 @@ fn grow_memory_to<S>(store: &mut Store<S>, memory: &Memory, need: usize) -> Resu
     Ok(())
 }
 
+fn after_guest_call_core<S>(module: ModuleId, store: &mut Store<S>, instance: &Instance) {
+    if let Some(mem) = instance.get_memory(&mut *store, "memory") {
+        let sz = mem.data_size(&mut *store) as u64;
+        crate::metrics::record_memory_sample(module, sz);
+    }
+}
+
 fn map_wasmtime_err<T>(r: wasmtime::Result<T>) -> Result<T, String> {
     r.map_err(|e| e.to_string())
 }
@@ -529,11 +538,15 @@ pub fn call_i32_arity0(module: ModuleId, export: &str) -> Result<i32, String> {
     match instantiate_bundle(module)? {
         InstanceBundle::CorePlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), i32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, ()))
+            let r = map_wasmtime_err(f.call(&mut store, ()))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), i32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, ()))
+            let r = map_wasmtime_err(f.call(&mut store, ()))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), (i32,)>(&mut store, export))?;
@@ -550,11 +563,15 @@ pub fn call_i32_arity1(module: ModuleId, export: &str, a: i32) -> Result<i32, St
     match instantiate_bundle(module)? {
         InstanceBundle::CorePlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(i32,), i32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a,)))
+            let r = map_wasmtime_err(f.call(&mut store, (a,)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(i32,), i32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a,)))
+            let r = map_wasmtime_err(f.call(&mut store, (a,)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f =
@@ -574,12 +591,16 @@ pub fn call_i32_arity2(module: ModuleId, export: &str, a: i32, b: i32) -> Result
         InstanceBundle::CorePlain { mut store, instance } => {
             let f =
                 map_wasmtime_err(instance.get_typed_func::<(i32, i32), i32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a, b)))
+            let r = map_wasmtime_err(f.call(&mut store, (a, b)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f =
                 map_wasmtime_err(instance.get_typed_func::<(i32, i32), i32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a, b)))
+            let r = map_wasmtime_err(f.call(&mut store, (a, b)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f = map_wasmtime_err(
@@ -600,11 +621,15 @@ pub fn call_i64_arity0(module: ModuleId, export: &str) -> Result<i64, String> {
     match instantiate_bundle(module)? {
         InstanceBundle::CorePlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), i64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, ()))
+            let r = map_wasmtime_err(f.call(&mut store, ()))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), i64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, ()))
+            let r = map_wasmtime_err(f.call(&mut store, ()))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), (i64,)>(&mut store, export))?;
@@ -621,11 +646,15 @@ pub fn call_i64_arity1(module: ModuleId, export: &str, a: i64) -> Result<i64, St
     match instantiate_bundle(module)? {
         InstanceBundle::CorePlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(i64,), i64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a,)))
+            let r = map_wasmtime_err(f.call(&mut store, (a,)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(i64,), i64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a,)))
+            let r = map_wasmtime_err(f.call(&mut store, (a,)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f =
@@ -644,11 +673,15 @@ pub fn call_f32_arity0(module: ModuleId, export: &str) -> Result<f32, String> {
     match instantiate_bundle(module)? {
         InstanceBundle::CorePlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), f32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, ()))
+            let r = map_wasmtime_err(f.call(&mut store, ()))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), f32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, ()))
+            let r = map_wasmtime_err(f.call(&mut store, ()))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), (f32,)>(&mut store, export))?;
@@ -665,11 +698,15 @@ pub fn call_f32_arity1(module: ModuleId, export: &str, a: f32) -> Result<f32, St
     match instantiate_bundle(module)? {
         InstanceBundle::CorePlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(f32,), f32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a,)))
+            let r = map_wasmtime_err(f.call(&mut store, (a,)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(f32,), f32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a,)))
+            let r = map_wasmtime_err(f.call(&mut store, (a,)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f =
@@ -689,12 +726,16 @@ pub fn call_f32_arity2(module: ModuleId, export: &str, a: f32, b: f32) -> Result
         InstanceBundle::CorePlain { mut store, instance } => {
             let f =
                 map_wasmtime_err(instance.get_typed_func::<(f32, f32), f32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a, b)))
+            let r = map_wasmtime_err(f.call(&mut store, (a, b)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f =
                 map_wasmtime_err(instance.get_typed_func::<(f32, f32), f32>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a, b)))
+            let r = map_wasmtime_err(f.call(&mut store, (a, b)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f = map_wasmtime_err(
@@ -715,11 +756,15 @@ pub fn call_f64_arity0(module: ModuleId, export: &str) -> Result<f64, String> {
     match instantiate_bundle(module)? {
         InstanceBundle::CorePlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), f64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, ()))
+            let r = map_wasmtime_err(f.call(&mut store, ()))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), f64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, ()))
+            let r = map_wasmtime_err(f.call(&mut store, ()))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(), (f64,)>(&mut store, export))?;
@@ -736,11 +781,15 @@ pub fn call_f64_arity1(module: ModuleId, export: &str, a: f64) -> Result<f64, St
     match instantiate_bundle(module)? {
         InstanceBundle::CorePlain { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(f64,), f64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a,)))
+            let r = map_wasmtime_err(f.call(&mut store, (a,)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f = map_wasmtime_err(instance.get_typed_func::<(f64,), f64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a,)))
+            let r = map_wasmtime_err(f.call(&mut store, (a,)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f =
@@ -760,12 +809,16 @@ pub fn call_f64_arity2(module: ModuleId, export: &str, a: f64, b: f64) -> Result
         InstanceBundle::CorePlain { mut store, instance } => {
             let f =
                 map_wasmtime_err(instance.get_typed_func::<(f64, f64), f64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a, b)))
+            let r = map_wasmtime_err(f.call(&mut store, (a, b)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::CoreWasi { mut store, instance } => {
             let f =
                 map_wasmtime_err(instance.get_typed_func::<(f64, f64), f64>(&mut store, export))?;
-            map_wasmtime_err(f.call(&mut store, (a, b)))
+            let r = map_wasmtime_err(f.call(&mut store, (a, b)))?;
+            after_guest_call_core(module, &mut store, &instance);
+            Ok(r)
         }
         InstanceBundle::ComponentPlain { mut store, instance } => {
             let f = map_wasmtime_err(

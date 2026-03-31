@@ -12,7 +12,9 @@ use crate::{
         module_path_cstr,
     },
     proc_reg::{self, RegisterError},
-    registry::{self, ModuleId, RegisteredFunction},
+    registry::{
+        self, ModuleCatalogEntry, ModuleId, RegisteredFunction,
+    },
     runtime::wasmtime_backend,
 };
 
@@ -36,6 +38,7 @@ fn cleanup_failed_load(id: ModuleId, oids: &[pgrx::pg_sys::Oid]) {
     }
     let _ = registry::take_module_proc_oids(id);
     registry::take_module_wasi_and_policy(id);
+    crate::metrics::remove_module_memory_peak(id);
     wasmtime_backend::remove_compiled_module(id);
 }
 
@@ -118,6 +121,7 @@ pub fn load_from_bytes(
             module_id: id,
             export_name: export_name.clone(),
             signature: sig,
+            metrics: crate::metrics::alloc_export_stats(),
         };
         let oid = match proc_reg::register_wasm_trampoline_proc(
             &schema,
@@ -138,6 +142,17 @@ pub fn load_from_bytes(
 
     registry::record_module_abi(id, abi);
     registry::record_module_wasi_and_policy(id, needs_wasi, opts.policy);
+    let runtime = opts
+        .runtime
+        .clone()
+        .unwrap_or_else(|| "wasmtime".to_string());
+    registry::record_module_catalog(
+        id,
+        ModuleCatalogEntry {
+            name_prefix: prefix,
+            runtime,
+        },
+    );
     Ok(id)
 }
 
@@ -337,6 +352,8 @@ pub fn unload_module(id: i64) -> Result<(), LoadError> {
     }
     let _ = registry::take_module_abi(mid);
     registry::take_module_wasi_and_policy(mid);
+    let _ = registry::take_module_catalog(mid);
+    crate::metrics::remove_module_memory_peak(mid);
     wasmtime_backend::remove_compiled_module(mid);
     Ok(())
 }

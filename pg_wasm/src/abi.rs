@@ -21,6 +21,18 @@ pub enum WasmAbiKind {
     CoreWasm,
 }
 
+impl WasmAbiKind {
+    /// Stable lowercase label for catalogs and SQL helpers.
+    #[must_use]
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Extism => "extism",
+            Self::ComponentModel => "component",
+            Self::CoreWasm => "core",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AbiDetectError {
     #[error("pg_wasm: could not parse wasm for ABI detection: {0}")]
