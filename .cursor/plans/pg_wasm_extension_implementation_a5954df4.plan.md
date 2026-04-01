@@ -31,7 +31,7 @@ todos:
     status: completed
   - id: resource-limits
     content: Per-module and global linear memory and execution limits (e.g. fuel/epoch); enforce at instance/trampoline.
-    status: pending
+    status: completed
   - id: additional-runtimes
     content: Feature-gate wasmer and extism backends; runtime selection via load options.
     status: pending
