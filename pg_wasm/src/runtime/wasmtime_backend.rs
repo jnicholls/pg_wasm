@@ -281,6 +281,14 @@ fn component_type_to_return(t: &component::types::Type) -> Option<PgWasmReturnDe
 
 const WASM_PAGE_BYTES: u64 = 65536;
 
+/// Short error text for PostgreSQL `ereport`: `Error::to_string()` includes a wasm backtrace and is
+/// very large, which has proven brittle with pgrx's `pg_guard_ffi_boundary` + `error!` path.
+fn wasmtime_to_host_string(err: wasmtime::Error) -> String {
+    err.downcast_ref::<wasmtime::Trap>()
+        .map(|t| format!("{t:?}"))
+        .unwrap_or_else(|| format!("{err:#}"))
+}
+
 fn store_limits_for_module(module: ModuleId) -> StoreLimits {
     let pages = guc::effective_max_memory_pages(module);
     if pages == 0 {
@@ -347,7 +355,8 @@ fn instantiate_bundle(module: ModuleId) -> Result<InstanceBundle, String> {
                 let mut store = Store::new(&engine, lim);
                 store.limiter(|s| s);
                 prime_store_fuel(&mut store, module)?;
-                let instance = Instance::new(&mut store, &arc, &[]).map_err(|e| e.to_string())?;
+                let instance =
+                    Instance::new(&mut store, &arc, &[]).map_err(wasmtime_to_host_string)?;
                 return Ok(InstanceBundle::CorePlain { store, instance });
             }
             let wasi = build_wasi_p1_ctx(&policy)?;
@@ -364,10 +373,10 @@ fn instantiate_bundle(module: ModuleId) -> Result<InstanceBundle, String> {
             wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |s: &mut PgWasmStoreState| {
                 &mut s.wasi
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(wasmtime_to_host_string)?;
             let instance = linker
                 .instantiate(&mut store, &arc)
-                .map_err(|e| e.to_string())?;
+                .map_err(wasmtime_to_host_string)?;
             Ok(InstanceBundle::CoreWasi { store, instance })
         }
         CompiledArtifact::Component(arc) => {
@@ -378,18 +387,18 @@ fn instantiate_bundle(module: ModuleId) -> Result<InstanceBundle, String> {
                 prime_store_fuel(&mut store, module)?;
                 let instance = linker
                     .instantiate(&mut store, &arc)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(wasmtime_to_host_string)?;
                 return Ok(InstanceBundle::ComponentPlain { store, instance });
             }
             let mut linker = component::Linker::new(&engine);
-            wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(|e| e.to_string())?;
+            wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(wasmtime_to_host_string)?;
             let state = PgWasmP2StoreState::new(&policy, lim)?;
             let mut store = Store::new(&engine, state);
             store.limiter(|s| &mut s.limits);
             prime_store_fuel(&mut store, module)?;
             let instance = linker
                 .instantiate(&mut store, &arc)
-                .map_err(|e| e.to_string())?;
+                .map_err(wasmtime_to_host_string)?;
             Ok(InstanceBundle::ComponentWasi { store, instance })
         }
     }
@@ -462,7 +471,7 @@ fn call_lifecycle_hook_core<S>(
         ([], []) => {
             func
                 .call(&mut *store, &[], &mut [])
-                .map_err(|e| e.to_string())?;
+                .map_err(wasmtime_to_host_string)?;
         }
         ([ValType::I32, ValType::I32], []) => {
             let memory = instance
@@ -488,7 +497,7 @@ fn call_lifecycle_hook_core<S>(
                     &[Val::I32(ptr), Val::I32(len)],
                     &mut [],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(wasmtime_to_host_string)?;
         }
         _ => {
             return Err(format!(
@@ -518,7 +527,7 @@ fn call_lifecycle_hook_component<T>(
     let _ = config;
     func
         .call(&mut *store, &[], &mut [])
-        .map_err(|e| e.to_string())
+        .map_err(wasmtime_to_host_string)
 }
 
 fn wasm_types_for_hint(hint: &ExportTypeHint) -> Result<(Vec<ValType>, Vec<ValType>), String> {
@@ -616,7 +625,7 @@ fn call_mem_in_out_impl<S>(
         .ok_or_else(|| "pg_wasm: wasm module has no exported `memory`".to_string())?;
     let f = instance
         .get_typed_func::<(i32, i32), i32>(&mut *store, export)
-        .map_err(|e| e.to_string())?;
+        .map_err(wasmtime_to_host_string)?;
 
     let base = MEM_IO_INPUT_BASE as usize;
     let out_base = base + ((input.len() + 7) & !7);
@@ -629,7 +638,7 @@ fn call_mem_in_out_impl<S>(
 
     let out_len = f
         .call(&mut *store, (MEM_IO_INPUT_BASE as i32, input.len() as i32))
-        .map_err(|e| e.to_string())?;
+        .map_err(wasmtime_to_host_string)?;
     if out_len < 0 {
         return Err(format!("pg_wasm: wasm returned negative output length {out_len}"));
     }
@@ -656,7 +665,7 @@ fn grow_memory_to<S>(store: &mut Store<S>, memory: &Memory, need: usize) -> Resu
     while current < need {
         memory
             .grow(&mut *store, 1)
-            .map_err(|e| format!("pg_wasm: memory.grow failed: {e}"))?;
+            .map_err(|e| format!("pg_wasm: memory.grow failed: {}", wasmtime_to_host_string(e)))?;
         current += page;
     }
     Ok(())
@@ -670,7 +679,7 @@ fn after_guest_call_core<S>(module: ModuleId, store: &mut Store<S>, instance: &I
 }
 
 fn map_wasmtime_err<T>(r: wasmtime::Result<T>) -> Result<T, String> {
-    r.map_err(|e| e.to_string())
+    r.map_err(wasmtime_to_host_string)
 }
 
 pub fn call_i32_arity0(module: ModuleId, export: &str) -> Result<i32, String> {
@@ -1074,6 +1083,15 @@ impl WasmtimeBackend {
     fn empty() -> Self {
         let mut config = Config::new();
         config.consume_fuel(true);
+        config.wasm_backtrace_max_frames(None);
+        // Postgres uses sigsetjmp/siglongjmp for `elog(ERROR)` (see pgrx `pg_guard_ffi_boundary`).
+        // Wasmtime's process-wide trap handlers can fight that model; disable signal-based traps
+        // so Cranelift emits explicit checks instead (`Config::signals_based_traps`).
+        config.signals_based_traps(false);
+        unsafe {
+            config.cranelift_flag_set("enable_heap_access_spectre_mitigation", "false");
+            config.cranelift_flag_set("enable_table_access_spectre_mitigation", "false");
+        }
         let engine = Engine::new(&config).unwrap_or_else(|e| {
             panic!("pg_wasm: wasmtime Engine::new failed: {e}");
         });
@@ -1092,7 +1110,7 @@ impl WasmtimeBackend {
     ) -> Result<(Vec<(String, ExportSignature)>, bool), String> {
         match abi {
             WasmAbiKind::ComponentModel => {
-                let comp = Component::new(&self.engine, wasm).map_err(|e| e.to_string())?;
+                let comp = Component::new(&self.engine, wasm).map_err(wasmtime_to_host_string)?;
                 let needs_wasi = component_imports_wasi(&comp);
                 let out = self.list_component_exports(&comp, export_hints)?;
                 self.artifacts
@@ -1100,7 +1118,7 @@ impl WasmtimeBackend {
                 Ok((out, needs_wasi))
             }
             WasmAbiKind::CoreWasm => {
-                let module = Module::new(&self.engine, wasm).map_err(|e| e.to_string())?;
+                let module = Module::new(&self.engine, wasm).map_err(wasmtime_to_host_string)?;
                 let needs_wasi = core_module_imports_wasi(&module);
                 let out = self.list_core_exports(&module, export_hints)?;
                 self.artifacts

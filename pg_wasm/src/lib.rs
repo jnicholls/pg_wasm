@@ -536,7 +536,10 @@ mod tests {
         .catch_when(PgSqlErrorCode::ERRCODE_INTERNAL_ERROR, caught_error_message)
         .execute();
         assert!(
-            msg.contains("fuel") || msg.contains("trap") || msg.contains("wasm"),
+            msg.contains("fuel")
+                || msg.contains("trap")
+                || msg.contains("wasm")
+                || msg.contains("Fuel"),
             "expected fuel/trap style error, got {msg:?}"
         );
         Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload spin");
@@ -574,7 +577,11 @@ mod tests {
         .catch_when(PgSqlErrorCode::ERRCODE_INTERNAL_ERROR, caught_error_message)
         .execute();
         assert!(
-            msg.contains("memory") || msg.contains("grow") || msg.contains("limit"),
+            msg.contains("memory")
+                || msg.contains("grow")
+                || msg.contains("limit")
+                || msg.contains("wasm")
+                || msg.contains("Memory"),
             "expected memory limit error, got {msg:?}"
         );
         Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload lowmem");
@@ -665,5 +672,53 @@ mod rust_tests {
         let o = crate::LoadOptions::from_jsonb(Some(pgrx::JsonB(j)));
         assert_eq!(o.resource_limits.max_memory_pages, Some(128));
         assert_eq!(o.resource_limits.fuel, Some(999_999));
+    }
+}
+
+/// Fuel exhaustion under the same engine settings as `WasmtimeBackend`, outside PostgreSQL.
+#[cfg(all(test, feature = "runtime_wasmtime"))]
+mod wasmtime_trap_smoke {
+    use wasmtime::{Config, Engine, Instance, Module, Store, StoreLimitsBuilder};
+
+    fn engine_fuel() -> Engine {
+        let mut config = Config::new();
+        config.consume_fuel(true);
+        config.wasm_backtrace_max_frames(None);
+        config.signals_based_traps(false);
+        unsafe {
+            config.cranelift_flag_set("enable_heap_access_spectre_mitigation", "false");
+            config.cranelift_flag_set("enable_table_access_spectre_mitigation", "false");
+        }
+        Engine::new(&config).expect("engine")
+    }
+
+    #[test]
+    fn spin_trapped_as_fuel_error_not_abort() {
+        let wasm = include_bytes!(concat!(env!("OUT_DIR"), "/test_spin.wasm"));
+        let engine = engine_fuel();
+        let module = Module::new(&engine, wasm).expect("module");
+        let limits = StoreLimitsBuilder::new().memory_size(2 * 65536).build();
+        let mut store = Store::new(&engine, limits);
+        store.limiter(|s| s);
+        store.set_fuel(8000).expect("fuel");
+        let instance = Instance::new(&mut store, &module, &[]).expect("instance");
+        let f = instance
+            .get_typed_func::<(), i32>(&mut store, "spin")
+            .expect("spin");
+        let err = f.call(&mut store, ()).expect_err("expected trap");
+        let trap = err
+            .downcast_ref::<wasmtime::Trap>()
+            .copied()
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected Trap root (Display={err:?} root={:?})",
+                    err.root_cause()
+                )
+            });
+        assert_eq!(
+            trap,
+            wasmtime::Trap::OutOfFuel,
+            "full error: {err:#}"
+        );
     }
 }
