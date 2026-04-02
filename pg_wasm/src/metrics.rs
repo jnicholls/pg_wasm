@@ -2,7 +2,6 @@
 //!
 //! Stats are **process-local** (each PostgreSQL backend has its own counters).
 
-#[cfg(feature = "_pg_wasm_runtime")]
 use std::{
     collections::HashMap,
     sync::{
@@ -12,19 +11,15 @@ use std::{
     time::Instant,
 };
 
-#[cfg(feature = "_pg_wasm_runtime")]
 use crate::registry::ModuleId;
 
-#[cfg(feature = "_pg_wasm_runtime")]
 static MEMORY_PEAK_BYTES: OnceLock<Mutex<HashMap<ModuleId, u64>>> = OnceLock::new();
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn memory_peaks() -> &'static Mutex<HashMap<ModuleId, u64>> {
     MEMORY_PEAK_BYTES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Counters updated from the trampoline on each WASM call (when collection is enabled).
-#[cfg(feature = "_pg_wasm_runtime")]
 #[derive(Debug, Default)]
 pub struct ExportStats {
     pub(super) invocations: AtomicU64,
@@ -32,7 +27,6 @@ pub struct ExportStats {
     pub(super) total_time_ns: AtomicU64,
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 impl ExportStats {
     #[must_use]
     pub fn invocations(&self) -> u64 {
@@ -50,25 +44,21 @@ impl ExportStats {
     }
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 #[must_use]
 pub fn alloc_export_stats() -> std::sync::Arc<ExportStats> {
     std::sync::Arc::new(ExportStats::default())
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 #[must_use]
 pub fn collecting() -> bool {
     crate::guc::collect_metrics()
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 #[must_use]
 pub fn timer_start() -> Option<Instant> {
     collecting().then(Instant::now)
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 pub fn timer_finish_ok(stats: &ExportStats, start: Option<Instant>) {
     if !collecting() {
         return;
@@ -81,7 +71,6 @@ pub fn timer_finish_ok(stats: &ExportStats, start: Option<Instant>) {
         .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 pub fn timer_finish_err(stats: &ExportStats, _start: Option<Instant>) {
     if !collecting() {
         return;
@@ -89,7 +78,6 @@ pub fn timer_finish_err(stats: &ExportStats, _start: Option<Instant>) {
     stats.errors.fetch_add(1, Ordering::Relaxed);
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 pub fn record_memory_sample(module: ModuleId, byte_size: u64) {
     if !collecting() || byte_size == 0 {
         return;
@@ -101,7 +89,6 @@ pub fn record_memory_sample(module: ModuleId, byte_size: u64) {
     *e = (*e).max(byte_size);
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 #[must_use]
 pub fn guest_memory_peak_bytes(module: ModuleId) -> Option<u64> {
     let g = memory_peaks()
@@ -110,7 +97,6 @@ pub fn guest_memory_peak_bytes(module: ModuleId) -> Option<u64> {
     g.get(&module).copied()
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 pub fn remove_module_memory_peak(module: ModuleId) {
     let mut g = memory_peaks()
         .lock()

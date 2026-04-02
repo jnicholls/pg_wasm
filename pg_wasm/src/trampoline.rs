@@ -7,7 +7,6 @@ use pgrx::{JsonB, fcinfo::pg_getarg, pg_sys, prelude::*};
 
 use crate::mapping::{ExportSignature, PgWasmReturnDesc, PgWasmTypeKind};
 
-#[cfg(feature = "_pg_wasm_runtime")]
 use crate::registry::RegisteredFunction;
 
 /// `CREATE FUNCTION … AS '$libdir/pg_wasm', '…'` link name for the trampoline body.
@@ -21,7 +20,6 @@ pub extern "C" fn pg_finfo_pg_wasm_udf_trampoline() -> &'static pg_sys::Pg_finfo
 }
 
 /// Entry point for every WASM-backed SQL function; dispatch uses `flinfo->fn_oid` and the registry.
-#[cfg(feature = "_pg_wasm_runtime")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn pg_wasm_udf_trampoline(
     fcinfo: pg_sys::FunctionCallInfo,
@@ -51,26 +49,11 @@ pub unsafe extern "C-unwind" fn pg_wasm_udf_trampoline(
     }
 }
 
-#[cfg(not(feature = "_pg_wasm_runtime"))]
-#[unsafe(no_mangle)]
-pub unsafe extern "C-unwind" fn pg_wasm_udf_trampoline(
-    fcinfo: pg_sys::FunctionCallInfo,
-) -> pg_sys::Datum {
-    unsafe {
-        pgrx::pg_sys::ffi::pg_guard_ffi_boundary(|| {
-            let _ = fcinfo;
-            error!("pg_wasm: built without a WebAssembly runtime (enable runtime_wasmer, runtime_wasmtime, or runtime_extism)");
-        })
-    }
-}
-
-#[cfg(feature = "_pg_wasm_runtime")]
 struct PreparedWasmCall {
     reg: RegisteredFunction,
     inv: WasmInvocation,
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 enum WasmInvocation {
     MemInOut(Vec<u8>),
     I32Arity0,
@@ -89,7 +72,6 @@ enum WasmInvocation {
     F64Arity2(f64, f64),
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 enum WasmValue {
     Bytes(Vec<u8>),
     I32(i32),
@@ -99,7 +81,6 @@ enum WasmValue {
     F64(f64),
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn prepare_wasm_trampoline(fcinfo: pg_sys::FunctionCallInfo) -> PreparedWasmCall {
     if fcinfo.is_null() {
         error!("pg_wasm: null fcinfo in trampoline");
@@ -122,7 +103,6 @@ fn prepare_wasm_trampoline(fcinfo: pg_sys::FunctionCallInfo) -> PreparedWasmCall
     PreparedWasmCall { reg, inv }
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         return (*s).to_string();
@@ -133,7 +113,6 @@ fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
     "panic during wasm isolate".to_string()
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn run_wasm_isolated(p: &PreparedWasmCall) -> Result<WasmValue, String> {
     use crate::runtime::dispatch::{
         call_bool_result_arity0, call_bool_result_arity1, call_bool_result_arity2, call_f32_arity0,
@@ -190,7 +169,6 @@ fn run_wasm_isolated(p: &PreparedWasmCall) -> Result<WasmValue, String> {
     }
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn finish_wasm_trampoline_ok(
     prepared: PreparedWasmCall,
     t0: Option<std::time::Instant>,
@@ -201,7 +179,6 @@ fn finish_wasm_trampoline_ok(
     wasm_value_into_datum(reg, v)
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn uses_buffer_io(sig: &ExportSignature) -> bool {
     let buf_ret = matches!(sig.ret.kind, PgWasmTypeKind::String | PgWasmTypeKind::Bytes);
     if !buf_ret {
@@ -217,7 +194,6 @@ fn uses_buffer_io(sig: &ExportSignature) -> bool {
         )
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn prepare_buffer_invocation(
     sig: &ExportSignature,
     fcinfo: pg_sys::FunctionCallInfo,
@@ -249,7 +225,6 @@ fn prepare_buffer_invocation(
     WasmInvocation::MemInOut(input)
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn prepare_scalar_invocation(
     reg: &RegisteredFunction,
     fcinfo: pg_sys::FunctionCallInfo,
@@ -334,7 +309,6 @@ fn prepare_scalar_invocation(
     }
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn wasm_value_into_datum(reg: &RegisteredFunction, v: WasmValue) -> pg_sys::Datum {
     let sig = &reg.signature;
     match v {
@@ -363,7 +337,6 @@ fn wasm_value_into_datum(reg: &RegisteredFunction, v: WasmValue) -> pg_sys::Datu
     }
 }
 
-#[cfg(feature = "_pg_wasm_runtime")]
 fn buffer_output_datum(ret: &PgWasmReturnDesc, out: &[u8]) -> pg_sys::Datum {
     match (ret.pg_oid, ret.kind) {
         (pg_sys::TEXTOID, PgWasmTypeKind::String) => {

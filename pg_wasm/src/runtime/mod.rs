@@ -3,11 +3,9 @@
 
 mod stub;
 
-#[cfg(feature = "_pg_wasm_runtime")]
 pub mod dispatch;
 #[cfg(feature = "runtime_extism")]
 pub mod extism_backend;
-#[cfg(feature = "_pg_wasm_runtime")]
 pub mod selection;
 #[cfg(feature = "runtime_extism")]
 pub mod wasm_bytes_exports;
@@ -17,7 +15,6 @@ pub mod wasmer_backend;
 pub mod wasmtime_backend;
 
 pub use stub::StubWasmBackend;
-#[cfg(feature = "_pg_wasm_runtime")]
 pub use selection::ModuleExecutionBackend;
 
 /// Which concrete runtime executes a module.

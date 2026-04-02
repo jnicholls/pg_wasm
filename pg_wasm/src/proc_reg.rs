@@ -274,18 +274,11 @@ fn pg_wasm_debug_register_zeroary_i32(
     if let Err(e) = assert_sql_identifier(export_name) {
         error!("{e}");
     }
-    #[cfg(feature = "_pg_wasm_runtime")]
     let reg = RegisteredFunction {
         module_id: ModuleId(module_id),
         export_name: export_name.to_string(),
         signature: ExportSignature::default(),
         metrics: crate::metrics::alloc_export_stats(),
-    };
-    #[cfg(not(feature = "_pg_wasm_runtime"))]
-    let reg = RegisteredFunction {
-        module_id: ModuleId(module_id),
-        export_name: export_name.to_string(),
-        signature: ExportSignature::default(),
     };
     match register_wasm_trampoline_proc(schema, sql_name, &[], pg_sys::INT4OID, reg) {
         Ok(oid) => oid,
@@ -304,18 +297,11 @@ fn pg_wasm_debug_register_binary_i32(
     if let Err(e) = assert_sql_identifier(export_name) {
         error!("{e}");
     }
-    #[cfg(feature = "_pg_wasm_runtime")]
     let reg = RegisteredFunction {
         module_id: ModuleId(module_id),
         export_name: export_name.to_string(),
         signature: ExportSignature::default(),
         metrics: crate::metrics::alloc_export_stats(),
-    };
-    #[cfg(not(feature = "_pg_wasm_runtime"))]
-    let reg = RegisteredFunction {
-        module_id: ModuleId(module_id),
-        export_name: export_name.to_string(),
-        signature: ExportSignature::default(),
     };
     match register_wasm_trampoline_proc(
         schema,

@@ -53,7 +53,7 @@ fn default_core_backend() -> Result<ModuleExecutionBackend, String> {
     {
         return Ok(ModuleExecutionBackend::Extism);
     }
-    unreachable!("pg_wasm: enable at least one runtime_* feature alongside _pg_wasm_runtime")
+    unreachable!("pg_wasm: enable at least one runtime_wasmer, runtime_wasmtime, or runtime_extism feature")
 }
 
 /// Pick the backend for `load_from_bytes` after ABI detection.
