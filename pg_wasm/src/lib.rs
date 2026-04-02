@@ -28,12 +28,11 @@ pub use config::{HostPolicy, LoadOptions, ModuleResourceLimits, PolicyOverrides}
 pub use mapping::{
     ExportHintMap, ExportSignature, ExportTypeHint, PgWasmArgDesc, PgWasmReturnDesc, PgWasmTypeKind,
 };
+pub use proc_reg::{RegisterError, drop_wasm_trampoline_proc, register_wasm_trampoline_proc};
+pub use registry::ModuleCatalogEntry;
 pub use registry::{
     ModuleId, RegisteredFunction, lookup_by_fn_oid, register_fn_oid, unregister_fn_oid,
 };
-
-pub use proc_reg::{RegisterError, drop_wasm_trampoline_proc, register_wasm_trampoline_proc};
-pub use registry::ModuleCatalogEntry;
 pub use runtime::ModuleExecutionBackend;
 pub use runtime::{RuntimeKind, StubWasmBackend, WasmRuntimeBackend};
 pub use trampoline::TRAMPOLINE_PG_SYMBOL;
