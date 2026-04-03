@@ -4,14 +4,14 @@
 mod stub;
 
 pub mod dispatch;
-#[cfg(feature = "runtime_extism")]
+#[cfg(feature = "runtime-extism")]
 pub mod extism_backend;
 pub mod selection;
-#[cfg(feature = "runtime_extism")]
+#[cfg(feature = "runtime-extism")]
 pub mod wasm_bytes_exports;
-#[cfg(feature = "runtime_wasmer")]
+#[cfg(feature = "runtime-wasmer")]
 pub mod wasmer_backend;
-#[cfg(feature = "runtime_wasmtime")]
+#[cfg(feature = "runtime-wasmtime")]
 pub mod wasmtime_backend;
 
 pub use stub::StubWasmBackend;

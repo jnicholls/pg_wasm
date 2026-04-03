@@ -1,12 +1,12 @@
 use pgrx::prelude::*;
 
 #[cfg(not(any(
-    feature = "runtime_wasmer",
-    feature = "runtime_wasmtime",
-    feature = "runtime_extism",
+    feature = "runtime-wasmer",
+    feature = "runtime-wasmtime",
+    feature = "runtime-extism",
 )))]
 compile_error!(
-    "pg_wasm: enable at least one runtime feature: runtime_wasmer, runtime_wasmtime, or runtime_extism"
+    "pg_wasm: enable at least one runtime feature: runtime-wasmer, runtime-wasmtime, or runtime-extism"
 );
 
 use pgrx::JsonB;
@@ -38,11 +38,11 @@ pub use runtime::{RuntimeKind, StubWasmBackend, WasmRuntimeBackend};
 pub use trampoline::TRAMPOLINE_PG_SYMBOL;
 
 pub use abi::WasmAbiKind;
-#[cfg(feature = "runtime_extism")]
+#[cfg(feature = "runtime-extism")]
 pub use runtime::extism_backend::ExtismBackend;
-#[cfg(feature = "runtime_wasmer")]
+#[cfg(feature = "runtime-wasmer")]
 pub use runtime::wasmer_backend::WasmerBackend;
-#[cfg(feature = "runtime_wasmtime")]
+#[cfg(feature = "runtime-wasmtime")]
 pub use runtime::wasmtime_backend::WasmtimeBackend;
 
 ::pgrx::pg_module_magic!(name, version);
@@ -332,7 +332,7 @@ mod tests {
         Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload dep");
     }
 
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     #[pg_test]
     fn test_trampoline_dispatch_via_sql_function() {
         let wasm = include_bytes!(concat!(env!("OUT_DIR"), "/test_add.wasm"));
@@ -393,7 +393,7 @@ mod tests {
         crate::runtime::wasmtime_backend::remove_compiled_module(mid);
     }
 
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     #[pg_test]
     fn test_pg_wasm_load_component_add() {
         let ext_nsp = extension_schema_name();
@@ -445,7 +445,7 @@ mod tests {
         Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload hooks mod");
     }
 
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     #[pg_test]
     fn test_wasmtime_backend_instantiates() {
         use crate::{RuntimeKind, WasmRuntimeBackend};
@@ -455,7 +455,7 @@ mod tests {
         });
     }
 
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     #[pg_test]
     fn test_wasm_load_wasi_rejected_without_allow_wasi_guc() {
         let ext_nsp = extension_schema_name();
@@ -484,7 +484,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     #[pg_test]
     fn test_wasm_load_wasi_succeeds_when_allowed() {
         let ext_nsp = extension_schema_name();
@@ -510,7 +510,7 @@ mod tests {
         Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload wasi");
     }
 
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     #[pg_test]
     fn test_resource_fuel_limits_infinite_loop() {
         let ext_nsp = extension_schema_name();
@@ -542,7 +542,7 @@ mod tests {
         Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload spin");
     }
 
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     #[pg_test]
     fn test_resource_memory_cap_blocks_host_grow() {
         let ext_nsp = extension_schema_name();
@@ -586,7 +586,7 @@ mod tests {
         Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload lowmem");
     }
 
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     #[pg_test]
     fn test_reconfigure_rejects_revoking_wasi_for_wasi_module() {
         let ext_nsp = extension_schema_name();
@@ -673,7 +673,7 @@ mod rust_tests {
 }
 
 /// Fuel exhaustion under the same engine settings as `WasmtimeBackend`, outside PostgreSQL.
-#[cfg(all(test, feature = "runtime_wasmtime"))]
+#[cfg(all(test, feature = "runtime-wasmtime"))]
 mod wasmtime_trap_smoke {
     use wasmtime::{Config, Engine, Instance, Module, Store, StoreLimitsBuilder};
 

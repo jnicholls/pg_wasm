@@ -5,11 +5,11 @@ use crate::abi::WasmAbiKind;
 /// Concrete runtime that owns compiled artifacts and invokes exports for a module.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModuleExecutionBackend {
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     Wasmtime,
-    #[cfg(feature = "runtime_wasmer")]
+    #[cfg(feature = "runtime-wasmer")]
     Wasmer,
-    #[cfg(feature = "runtime_extism")]
+    #[cfg(feature = "runtime-extism")]
     Extism,
 }
 
@@ -17,11 +17,11 @@ impl ModuleExecutionBackend {
     #[must_use]
     pub const fn as_catalog_str(self) -> &'static str {
         match self {
-            #[cfg(feature = "runtime_wasmtime")]
+            #[cfg(feature = "runtime-wasmtime")]
             Self::Wasmtime => "wasmtime",
-            #[cfg(feature = "runtime_wasmer")]
+            #[cfg(feature = "runtime-wasmer")]
             Self::Wasmer => "wasmer",
-            #[cfg(feature = "runtime_extism")]
+            #[cfg(feature = "runtime-extism")]
             Self::Extism => "extism",
         }
     }
@@ -37,23 +37,23 @@ fn normalize_runtime_opt(opt: Option<&str>) -> Option<String> {
 
 #[allow(unreachable_code)]
 fn default_core_backend() -> Result<ModuleExecutionBackend, String> {
-    #[cfg(feature = "runtime_wasmtime")]
+    #[cfg(feature = "runtime-wasmtime")]
     {
         return Ok(ModuleExecutionBackend::Wasmtime);
     }
-    #[cfg(all(not(feature = "runtime_wasmtime"), feature = "runtime_wasmer"))]
+    #[cfg(all(not(feature = "runtime-wasmtime"), feature = "runtime-wasmer"))]
     {
         return Ok(ModuleExecutionBackend::Wasmer);
     }
     #[cfg(all(
-        not(feature = "runtime_wasmtime"),
-        not(feature = "runtime_wasmer"),
-        feature = "runtime_extism"
+        not(feature = "runtime-wasmtime"),
+        not(feature = "runtime-wasmer"),
+        feature = "runtime-extism"
     ))]
     {
         return Ok(ModuleExecutionBackend::Extism);
     }
-    unreachable!("pg_wasm: enable at least one runtime_wasmer, runtime_wasmtime, or runtime_extism feature")
+    unreachable!("pg_wasm: enable at least one runtime-wasmer, runtime-wasmtime, or runtime-extism feature")
 }
 
 /// Pick the backend for `load_from_bytes` after ABI detection.
@@ -72,14 +72,14 @@ pub fn resolve_load_backend(
                     ));
                 }
             }
-            #[cfg(feature = "runtime_wasmtime")]
+            #[cfg(feature = "runtime-wasmtime")]
             {
                 return Ok(ModuleExecutionBackend::Wasmtime);
             }
-            #[cfg(not(feature = "runtime_wasmtime"))]
+            #[cfg(not(feature = "runtime-wasmtime"))]
             {
                 return Err(
-                    "pg_wasm_load: component model requires the `runtime_wasmtime` feature".into(),
+                    "pg_wasm_load: component model requires the `runtime-wasmtime` feature".into(),
                 );
             }
         }
@@ -91,14 +91,14 @@ pub fn resolve_load_backend(
                     ));
                 }
             }
-            #[cfg(feature = "runtime_extism")]
+            #[cfg(feature = "runtime-extism")]
             {
                 return Ok(ModuleExecutionBackend::Extism);
             }
-            #[cfg(not(feature = "runtime_extism"))]
+            #[cfg(not(feature = "runtime-extism"))]
             {
                 return Err(
-                    "pg_wasm_load: Extism ABI requires the `runtime_extism` feature".into(),
+                    "pg_wasm_load: Extism ABI requires the `runtime-extism` feature".into(),
                 );
             }
         }
@@ -107,23 +107,23 @@ pub fn resolve_load_backend(
             match choice {
                 "auto" => default_core_backend(),
                 "wasmtime" => {
-                    #[cfg(feature = "runtime_wasmtime")]
+                    #[cfg(feature = "runtime-wasmtime")]
                     {
                         Ok(ModuleExecutionBackend::Wasmtime)
                     }
-                    #[cfg(not(feature = "runtime_wasmtime"))]
+                    #[cfg(not(feature = "runtime-wasmtime"))]
                     {
-                        Err("pg_wasm_load: runtime \"wasmtime\" requires the `runtime_wasmtime` feature".into())
+                        Err("pg_wasm_load: runtime \"wasmtime\" requires the `runtime-wasmtime` feature".into())
                     }
                 }
                 "wasmer" => {
-                    #[cfg(feature = "runtime_wasmer")]
+                    #[cfg(feature = "runtime-wasmer")]
                     {
                         Ok(ModuleExecutionBackend::Wasmer)
                     }
-                    #[cfg(not(feature = "runtime_wasmer"))]
+                    #[cfg(not(feature = "runtime-wasmer"))]
                     {
-                        Err("pg_wasm_load: runtime \"wasmer\" requires the `runtime_wasmer` feature".into())
+                        Err("pg_wasm_load: runtime \"wasmer\" requires the `runtime-wasmer` feature".into())
                     }
                 }
                 "extism" => Err(
