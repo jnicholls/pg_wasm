@@ -15,7 +15,6 @@ pub struct PolicyOverrides {
 
 impl PolicyOverrides {
     /// JSON object for introspection helpers (e.g. `pg_wasm_modules` table function).
-    #[must_use]
     pub fn to_json_string(self) -> String {
         serde_json::json!({
             "allow_env": self.allow_env,
@@ -38,7 +37,6 @@ pub struct ModuleResourceLimits {
 }
 
 impl ModuleResourceLimits {
-    #[must_use]
     pub fn from_json_value(val: &serde_json::Value) -> Self {
         Self {
             max_memory_pages: val.get("max_memory_pages").and_then(json_u32_positive),
@@ -116,7 +114,6 @@ impl LoadOptions {
     }
 
     /// UTF-8 JSON of the full load `options` object for `(ptr, len)` lifecycle hooks; empty when unset.
-    #[must_use]
     pub fn config_blob_for_hooks(&self) -> Vec<u8> {
         let Some(JsonB(v)) = &self.raw else {
             return Vec::new();
@@ -124,7 +121,6 @@ impl LoadOptions {
         serde_json::to_vec(v).unwrap_or_default()
     }
 
-    #[must_use]
     pub fn from_jsonb(j: Option<JsonB>) -> Self {
         let Some(JsonB(val)) = j else {
             return Self::default();
@@ -186,7 +182,6 @@ pub struct HostPolicy {
 
 impl HostPolicy {
     /// Conservative defaults: no host access until explicitly enabled.
-    #[must_use]
     pub fn restricted() -> Self {
         Self::default()
     }

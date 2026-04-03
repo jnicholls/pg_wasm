@@ -23,7 +23,6 @@ pub enum WasmAbiKind {
 
 impl WasmAbiKind {
     /// Stable lowercase label for catalogs and SQL helpers.
-    #[must_use]
     pub const fn as_label(self) -> &'static str {
         match self {
             Self::Extism => "extism",
@@ -103,7 +102,6 @@ pub(crate) fn wasm_imports_wasi_host(wasm: &[u8]) -> Result<bool, AbiDetectError
 }
 
 /// Parse `options` JSON key `abi` (`core`, `extism`, `component`).
-#[must_use]
 pub fn parse_abi_override(s: &str) -> Option<WasmAbiKind> {
     match s.trim().to_ascii_lowercase().as_str() {
         "core" | "core_wasm" | "module" => Some(WasmAbiKind::CoreWasm),

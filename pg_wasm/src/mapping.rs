@@ -147,7 +147,6 @@ pub fn sql_name_to_pg_descriptor(name: &str) -> Result<(Oid, PgWasmTypeKind), St
 }
 
 /// Turn a resolved hint into registry/call metadata (caller validates wasm shapes).
-#[must_use]
 pub fn signature_from_hint(hint: &ExportTypeHint) -> ExportSignature {
     let args = hint
         .args

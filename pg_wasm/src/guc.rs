@@ -150,12 +150,10 @@ pub fn init() {
     );
 }
 
-#[must_use]
 pub fn collect_metrics() -> bool {
     PG_WASM_COLLECT_METRICS.get()
 }
 
-#[must_use]
 pub fn host_policy_from_gucs() -> HostPolicy {
     HostPolicy {
         allow_env: PG_WASM_ALLOW_WASI_ENV.get(),
@@ -167,7 +165,6 @@ pub fn host_policy_from_gucs() -> HostPolicy {
 }
 
 /// Merge extension GUCs with per-module overrides (plan §6). Overrides may only narrow.
-#[must_use]
 pub fn effective_host_policy(overrides: &PolicyOverrides) -> HostPolicy {
     let g = host_policy_from_gucs();
     HostPolicy {
@@ -186,28 +183,23 @@ fn narrow_bool(global: bool, module: Option<bool>) -> bool {
     }
 }
 
-#[must_use]
 pub fn module_path_cstr() -> Option<CString> {
     PG_WASM_MODULE_PATH.get()
 }
 
-#[must_use]
 pub fn max_module_bytes() -> usize {
     PG_WASM_MAX_MODULE_BYTES.get().max(0) as usize
 }
 
-#[must_use]
 pub fn allow_load_from_file() -> bool {
     PG_WASM_ALLOW_LOAD_FROM_FILE.get()
 }
 
-#[must_use]
 pub fn allowed_path_prefixes_raw() -> Option<CString> {
     PG_WASM_ALLOWED_PATH_PREFIXES.get()
 }
 
 /// Effective Wasm page cap: extension GUC intersected with optional per-module override.
-#[must_use]
 pub fn effective_max_memory_pages(module: ModuleId) -> u32 {
     let g = PG_WASM_MAX_MEMORY_PAGES.get().max(0) as u32;
     let m = crate::registry::module_resource_limits(module).and_then(|r| r.max_memory_pages);
@@ -220,7 +212,6 @@ pub fn effective_max_memory_pages(module: ModuleId) -> u32 {
 }
 
 /// Fuel for one guest entry: GUC (0 = unlimited) narrowed by per-module override.
-#[must_use]
 pub fn effective_fuel_per_invocation(module: ModuleId) -> u64 {
     let g_raw = PG_WASM_FUEL_PER_INVOCATION.get().max(0) as u64;
     let global = if g_raw == 0 { u64::MAX } else { g_raw };

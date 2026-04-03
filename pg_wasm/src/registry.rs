@@ -60,7 +60,6 @@ pub fn take_module_catalog(module: ModuleId) -> Option<ModuleCatalogEntry> {
     g.remove(&module)
 }
 
-#[must_use]
 pub fn module_catalog(module: ModuleId) -> Option<ModuleCatalogEntry> {
     let g = module_catalog_map()
         .lock()
@@ -68,7 +67,6 @@ pub fn module_catalog(module: ModuleId) -> Option<ModuleCatalogEntry> {
     g.get(&module).cloned()
 }
 
-#[must_use]
 pub fn list_module_catalog() -> Vec<(ModuleId, ModuleCatalogEntry)> {
     let g = module_catalog_map()
         .lock()
@@ -76,7 +74,6 @@ pub fn list_module_catalog() -> Vec<(ModuleId, ModuleCatalogEntry)> {
     g.iter().map(|(k, v)| (*k, v.clone())).collect()
 }
 
-#[must_use]
 pub fn iter_fn_oid_entries() -> Vec<(Oid, RegisteredFunction)> {
     let g = fn_oid_map().lock().expect("fn_oid map poisoned");
     g.iter().map(|(oid, reg)| (*oid, reg.clone())).collect()
@@ -124,7 +121,6 @@ pub fn record_module_execution_backend(module: ModuleId, backend: ModuleExecutio
     g.insert(module, backend);
 }
 
-#[must_use]
 pub fn module_execution_backend(module: ModuleId) -> Option<ModuleExecutionBackend> {
     let g = module_execution_backend_map()
         .lock()
@@ -147,7 +143,6 @@ pub fn record_module_hooks(module: ModuleId, hooks: ModuleHooks) {
     g.insert(module, hooks);
 }
 
-#[must_use]
 pub fn module_hooks(module: ModuleId) -> Option<ModuleHooks> {
     let g = module_hooks_map()
         .lock()
@@ -193,7 +188,6 @@ pub fn record_module_abi(module: ModuleId, abi: WasmAbiKind) {
     g.insert(module, abi);
 }
 
-#[must_use]
 pub fn module_abi(module: ModuleId) -> Option<WasmAbiKind> {
     let g = module_abi_map().lock().expect("module abi map poisoned");
     g.get(&module).copied()
@@ -224,7 +218,6 @@ pub fn replace_module_policy_overrides(
     Ok(())
 }
 
-#[must_use]
 pub fn module_needs_wasi(module: ModuleId) -> Option<bool> {
     let g = module_needs_wasi_map()
         .lock()
@@ -232,7 +225,6 @@ pub fn module_needs_wasi(module: ModuleId) -> Option<bool> {
     g.get(&module).copied()
 }
 
-#[must_use]
 pub fn module_policy_overrides(module: ModuleId) -> Option<PolicyOverrides> {
     let g = module_policy_overrides_map()
         .lock()
@@ -247,7 +239,6 @@ pub fn record_module_resource_limits(module: ModuleId, limits: ModuleResourceLim
     g.insert(module, limits);
 }
 
-#[must_use]
 pub fn module_resource_limits(module: ModuleId) -> Option<ModuleResourceLimits> {
     let g = module_resource_limits_map()
         .lock()
@@ -326,7 +317,6 @@ pub fn register_fn_oid(oid: Oid, entry: RegisteredFunction) {
 }
 
 /// Look up metadata for the current `fcinfo->flinfo->fn_oid`.
-#[must_use]
 pub fn lookup_by_fn_oid(oid: Oid) -> Option<RegisteredFunction> {
     let g = fn_oid_map().lock().expect("fn_oid map poisoned");
     g.get(&oid).cloned()

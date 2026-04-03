@@ -14,7 +14,6 @@ pub enum ModuleExecutionBackend {
 }
 
 impl ModuleExecutionBackend {
-    #[must_use]
     pub const fn as_catalog_str(self) -> &'static str {
         match self {
             #[cfg(feature = "runtime-wasmtime")]

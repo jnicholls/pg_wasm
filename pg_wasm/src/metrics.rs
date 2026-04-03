@@ -28,28 +28,23 @@ pub struct ExportStats {
 }
 
 impl ExportStats {
-    #[must_use]
     pub fn invocations(&self) -> u64 {
         self.invocations.load(Ordering::Relaxed)
     }
 
-    #[must_use]
     pub fn errors(&self) -> u64 {
         self.errors.load(Ordering::Relaxed)
     }
 
-    #[must_use]
     pub fn total_time_ns(&self) -> u64 {
         self.total_time_ns.load(Ordering::Relaxed)
     }
 }
 
-#[must_use]
 pub fn alloc_export_stats() -> std::sync::Arc<ExportStats> {
     std::sync::Arc::new(ExportStats::default())
 }
 
-#[must_use]
 pub fn collecting() -> bool {
     crate::guc::collect_metrics()
 }
@@ -89,7 +84,6 @@ pub fn record_memory_sample(module: ModuleId, byte_size: u64) {
     *e = (*e).max(byte_size);
 }
 
-#[must_use]
 pub fn guest_memory_peak_bytes(module: ModuleId) -> Option<u64> {
     let g = memory_peaks()
         .lock()
