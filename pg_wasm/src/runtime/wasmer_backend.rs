@@ -551,7 +551,7 @@ impl WasmRuntimeBackend for WasmerBackend {
 }
 
 /// For dispatch tests; Wasmer has no global engine handle like Wasmtime.
-#[cfg(any(test, feature = "pg-test"))]
+#[cfg(any(test, feature = "pg_test"))]
 pub fn execution_backend() -> super::selection::ModuleExecutionBackend {
     super::selection::ModuleExecutionBackend::Wasmer
 }
