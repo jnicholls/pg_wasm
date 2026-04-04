@@ -1,4 +1,4 @@
-//! Per-export invocation counters and timings; optional sampled guest linear memory (plan §7–8).
+//! Per-export invocation counters and timings; optional sampled guest linear memory.
 //!
 //! Stats are **process-local** (each PostgreSQL backend has its own counters).
 

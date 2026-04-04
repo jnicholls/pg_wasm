@@ -182,7 +182,7 @@ fn module_resource_limits_map() -> &'static Mutex<HashMap<ModuleId, ModuleResour
     MODULE_RESOURCE_LIMITS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Record detected or overridden ABI after a successful load (plan §2).
+/// Record detected or overridden ABI after a successful load.
 pub fn record_module_abi(module: ModuleId, abi: WasmAbiKind) {
     let mut g = module_abi_map().lock().expect("module abi map poisoned");
     g.insert(module, abi);

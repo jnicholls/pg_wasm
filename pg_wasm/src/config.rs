@@ -27,7 +27,7 @@ impl PolicyOverrides {
     }
 }
 
-/// Per-module resource overrides (`max_memory_pages`, `fuel`) in load/reconfigure JSON (plan §10).
+/// Per-module resource overrides (`max_memory_pages`, `fuel`) in load/reconfigure JSON.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ModuleResourceLimits {
     /// Cap guest linear memory per store (Wasm page = 64 KiB). `None` = use extension GUC only.
@@ -85,12 +85,12 @@ fn json_u64_positive(v: &serde_json::Value) -> Option<u64> {
     Some(n)
 }
 
-/// Per-module and load-time options passed as JSONB to `pg_wasm_load` (see plan §8–9).
+/// Per-module and load-time options passed as JSONB to `pg_wasm_load`.
 #[derive(Debug, Default)]
 pub struct LoadOptions {
     /// Preferred runtime when multiple backends are compiled in (`wasmtime`, `extism`).
     pub runtime: Option<String>,
-    /// Override ABI detection: `core`, `extism`, or `component` (see plan §2).
+    /// Override ABI detection: `core`, `extism`, or `component`.
     pub abi_override: Option<String>,
     /// Optional export names for lifecycle hooks (`on_load`, `on_unload`, `on_reconfigure`).
     pub hook_on_load: Option<String>,
@@ -142,7 +142,7 @@ impl LoadOptions {
     }
 }
 
-/// Parse `hooks` object and/or top-level `on_load` / `hook_on_load`-style keys (plan §9).
+/// Parse `hooks` object and/or top-level `on_load` / `hook_on_load`-style keys.
 fn hooks_from_json(val: &serde_json::Value) -> (Option<String>, Option<String>, Option<String>) {
     let nested = val.get("hooks").and_then(|v| v.as_object());
     let pick = |short: &str, long: &str| -> Option<String> {

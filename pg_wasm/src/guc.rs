@@ -1,4 +1,4 @@
-//! Extension GUCs (plan §8, §14).
+//! Extension GUCs.
 
 use std::ffi::CString;
 
@@ -39,7 +39,7 @@ pub static PG_WASM_ALLOW_WASI_NETWORK: GucSetting<bool> = GucSetting::<bool>::ne
 /// When off, per-call timing and invocation counters are not updated (`pg_wasm.collect_metrics`).
 pub static PG_WASM_COLLECT_METRICS: GucSetting<bool> = GucSetting::<bool>::new(true);
 
-/// Max Wasm linear memory pages (64 KiB each) per guest store. `0` = no extension-side cap (plan §10).
+/// Max Wasm linear memory pages (64 KiB each) per guest store. `0` = no extension-side cap.
 pub static PG_WASM_MAX_MEMORY_PAGES: GucSetting<i32> = GucSetting::<i32>::new(4096);
 
 /// Fuel units per wasm invocation when fuel is enabled (`pg_wasm.fuel_per_invocation`). `0` = unlimited.
@@ -164,7 +164,7 @@ pub fn host_policy_from_gucs() -> HostPolicy {
     }
 }
 
-/// Merge extension GUCs with per-module overrides (plan §6). Overrides may only narrow.
+/// Merge extension GUCs with per-module overrides. Overrides may only narrow.
 pub fn effective_host_policy(overrides: &PolicyOverrides) -> HostPolicy {
     let g = host_policy_from_gucs();
     HostPolicy {

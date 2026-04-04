@@ -1,4 +1,4 @@
-//! PostgreSQL ↔ WASM value representation and export registration hints (plan §3).
+//! PostgreSQL ↔ WASM value representation and export registration hints.
 
 use std::collections::HashMap;
 
@@ -14,7 +14,7 @@ pub type ExportHintMap = HashMap<String, ExportTypeHint>;
 pub struct ExportTypeHint {
     pub args: Vec<(Oid, PgWasmTypeKind)>,
     pub ret: (Oid, PgWasmTypeKind),
-    /// Optional WIT / component interface hint (ignored for core wasm today; plan §3).
+    /// Optional WIT / component interface hint (ignored for core wasm today).
     pub wit_interface: Option<String>,
 }
 

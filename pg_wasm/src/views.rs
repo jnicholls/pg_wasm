@@ -1,4 +1,4 @@
-//! Table functions for module catalog and WASM call metrics (plan §7–8).
+//! Table functions for module catalog and WASM call metrics.
 //!
 //! These return `TABLE (...)` and can be queried like `SELECT * FROM pg_wasm_modules()`.
 

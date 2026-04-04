@@ -1,4 +1,4 @@
-//! `load_from_bytes`, path resolution, and catalog registration (plan §8).
+//! `load_from_bytes`, path resolution, and catalog registration.
 
 use std::path::{Path, PathBuf};
 

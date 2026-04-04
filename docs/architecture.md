@@ -239,5 +239,5 @@ The **Extism** crate pins an older **Wasmtime** release than the workspace `wasm
 
 ## Related reading in-tree
 
-- Module-level `//!` comments in `abi.rs`, `load.rs`, `proc_reg.rs`, `trampoline.rs`, and `views.rs` tie behavior to the internal plan sections they reference.
+- Module-level `//!` comments at the top of major modules (for example `abi.rs`, `load.rs`, `proc_reg.rs`, `trampoline.rs`, and `views.rs`) summarize each area’s role.
 - `pg_wasm/src/lib.rs` `#[cfg(any(test, feature = "pg_test"))]` test module demonstrates end-to-end SPI usage: load hex-encoded fixtures, call generated function names, assert metrics and `pg_depend`.

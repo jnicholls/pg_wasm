@@ -1,6 +1,6 @@
-//! Detect WebAssembly ABI from raw bytes (plan §2): Extism → component model → core module.
+//! Detect WebAssembly ABI from raw bytes: Extism → component model → core module.
 //!
-//! Order matches the plan: treat [`WasmAbiKind::Extism`] before [`WasmAbiKind::CoreWasm`] for
+//! Detection order: treat [`WasmAbiKind::Extism`] before [`WasmAbiKind::CoreWasm`] for
 //! classic modules by scanning imports; component binaries are identified by the wasm header.
 
 use thiserror::Error;
