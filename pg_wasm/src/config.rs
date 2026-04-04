@@ -180,13 +180,6 @@ pub struct HostPolicy {
     pub allow_wasi: bool,
 }
 
-impl HostPolicy {
-    /// Conservative defaults: no host access until explicitly enabled.
-    pub fn restricted() -> Self {
-        Self::default()
-    }
-}
-
 /// Merge `delta` into `base` for `pg_wasm_reconfigure_module`: keys present in `delta` replace prior
 /// per-module overrides; omitted keys keep `base`.
 #[must_use]

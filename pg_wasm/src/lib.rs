@@ -118,12 +118,7 @@ mod tests {
     }
 
     fn wasm_bytes_hex_lower(wasm: &[u8]) -> String {
-        let mut s = String::with_capacity(wasm.len() * 2);
-        for b in wasm {
-            use std::fmt::Write;
-            write!(&mut s, "{b:02x}").unwrap();
-        }
-        s
+        format!("{:02x?}", wasm)
     }
 
     #[pg_test]
