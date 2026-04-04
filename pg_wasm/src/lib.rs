@@ -118,7 +118,12 @@ mod tests {
     }
 
     fn wasm_bytes_hex_lower(wasm: &[u8]) -> String {
-        format!("{:02x?}", wasm)
+        let mut s = String::with_capacity(wasm.len() * 2);
+        for b in wasm {
+            use std::fmt::Write;
+            write!(&mut s, "{b:02x}").unwrap();
+        }
+        s
     }
 
     #[pg_test]
@@ -141,11 +146,9 @@ mod tests {
         ))
         .expect("load with name only")
         .expect("module id");
-        let add2 = Spi::get_one::<i32>(&format!(
-            "SELECT {ext_nsp}.defaults_partial_add(1, 1)"
-        ))
-        .expect("add2")
-        .expect("non-null");
+        let add2 = Spi::get_one::<i32>(&format!("SELECT {ext_nsp}.defaults_partial_add(1, 1)"))
+            .expect("add2")
+            .expect("non-null");
         assert_eq!(add2, 2);
         Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid2})")).expect("unload2");
 
@@ -157,11 +160,10 @@ mod tests {
         let mp = canon.to_string_lossy().replace('\'', "''");
         Spi::run(&format!("SET pg_wasm.module_path = '{mp}'")).expect("set module_path");
         Spi::run("SET pg_wasm.allow_load_from_file = on").expect("set allow_load");
-        let mid3 = Spi::get_one::<i64>(&format!(
-            "SELECT {ext_nsp}.pg_wasm_load('add.wasm'::text)",
-        ))
-        .expect("path load one arg")
-        .expect("module id");
+        let mid3 =
+            Spi::get_one::<i64>(&format!("SELECT {ext_nsp}.pg_wasm_load('add.wasm'::text)",))
+                .expect("path load one arg")
+                .expect("module id");
         let add3 = Spi::get_one::<i32>(&format!("SELECT {ext_nsp}.m{mid3}_add(3, 4)"))
             .expect("path add")
             .expect("non-null");
@@ -173,9 +175,8 @@ mod tests {
     fn test_pg_wasm_metrics_and_table_functions() {
         let ext_nsp = extension_schema_name();
         let hex = wasm_fixture_hex_lower();
-        let load_sql = format!(
-            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'met'::text)",
-        );
+        let load_sql =
+            format!("SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'met'::text)",);
         let mid = Spi::get_one::<i64>(&load_sql)
             .expect("load spi")
             .expect("module id");
@@ -221,9 +222,8 @@ mod tests {
     fn test_pg_wasm_load_bytea_invokes_exports() {
         let ext_nsp = extension_schema_name();
         let hex = wasm_fixture_hex_lower();
-        let load_sql = format!(
-            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'ld1'::text)",
-        );
+        let load_sql =
+            format!("SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'ld1'::text)",);
         let mid = Spi::get_one::<i64>(&load_sql)
             .expect("load spi")
             .expect("module id");
@@ -324,9 +324,8 @@ mod tests {
     fn test_dynamic_proc_is_extension_member() {
         let ext_nsp = extension_schema_name();
         let hex = wasm_fixture_hex_lower();
-        let load_sql = format!(
-            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'depwm'::text)",
-        );
+        let load_sql =
+            format!("SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'depwm'::text)",);
         let mid = Spi::get_one::<i64>(&load_sql)
             .expect("load dep")
             .expect("mid");
@@ -414,9 +413,8 @@ mod tests {
             env!("OUT_DIR"),
             "/test_add.component.wasm"
         )));
-        let load_sql = format!(
-            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'cadd'::text)",
-        );
+        let load_sql =
+            format!("SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'cadd'::text)",);
         let mid = Spi::get_one::<i64>(&load_sql)
             .expect("load component")
             .expect("mid");
@@ -475,9 +473,8 @@ mod tests {
             "/test_wasi_fd_write.wasm"
         )));
         Spi::run("SET pg_wasm.allow_wasi = off").expect("guc");
-        let load_sql = format!(
-            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'wasi_x'::text)",
-        );
+        let load_sql =
+            format!("SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'wasi_x'::text)",);
         let msg = PgTryBuilder::new(|| match Spi::get_one::<i64>(&load_sql) {
             Err(e) => format!("{e}"),
             Ok(Some(_)) => "__unexpected_ok__".to_string(),

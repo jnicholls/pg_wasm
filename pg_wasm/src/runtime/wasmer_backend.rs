@@ -1,11 +1,12 @@
-//! Wasmer backend: core WebAssembly modules only (no components, no WASI in this backend).
+//! Wasmer backend: process singleton owns [`Engine`] and compiled [`Module`] artifacts (core wasm
+//! only; no components, no WASI in this backend).
 
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, OnceLock},
 };
 
-use wasmer::{ExternType, Instance, Memory, Module, Pages, Store, Type, imports};
+use wasmer::{Engine, ExternType, Instance, Memory, Module, Pages, Store, Type, imports};
 
 use super::{RuntimeKind, WasmRuntimeBackend};
 use crate::{
@@ -17,21 +18,27 @@ use crate::{
     registry::{self, ModuleId},
 };
 
-static INSTANCE: OnceLock<Mutex<WasmerBackendState>> = OnceLock::new();
+static INSTANCE: OnceLock<Mutex<WasmerBackend>> = OnceLock::new();
 
 pub const MEM_IO_INPUT_BASE: u32 = 1024;
 const MEM_IO_MAX_OUT: u32 = 16 * 1024 * 1024;
 
-struct WasmerBackendState {
+pub struct WasmerBackend {
     artifacts: HashMap<ModuleId, Arc<Module>>,
+    engine: Engine,
 }
 
-fn mutex() -> &'static Mutex<WasmerBackendState> {
-    INSTANCE.get_or_init(|| {
-        Mutex::new(WasmerBackendState {
+impl WasmerBackend {
+    fn empty() -> Self {
+        Self {
             artifacts: HashMap::new(),
-        })
-    })
+            engine: Engine::default(),
+        }
+    }
+}
+
+fn mutex() -> &'static Mutex<WasmerBackend> {
+    INSTANCE.get_or_init(|| Mutex::new(WasmerBackend::empty()))
 }
 
 fn core_module_imports_wasi(module: &Module) -> bool {
@@ -220,8 +227,8 @@ pub fn compile_store_and_list_exports(
                 .into(),
         );
     }
-    let store = Store::default();
-    let module = Module::new(&store, wasm).map_err(|e| format!("wasmer compile: {e}"))?;
+    let mut g = mutex().lock().map_err(|e| e.to_string())?;
+    let module = Module::new(&g.engine, wasm).map_err(|e| format!("wasmer compile: {e}"))?;
     let needs_wasi = core_module_imports_wasi(&module);
     if needs_wasi {
         return Err(
@@ -230,7 +237,6 @@ pub fn compile_store_and_list_exports(
         );
     }
     let out = list_core_exports(&module, export_hints)?;
-    let mut g = mutex().lock().map_err(|e| e.to_string())?;
     g.artifacts.insert(id, Arc::new(module));
     Ok((out, false))
 }
@@ -241,12 +247,15 @@ pub fn remove_compiled_module(id: ModuleId) {
     }
 }
 
-fn get_module(id: ModuleId) -> Result<Arc<Module>, String> {
+fn module_and_engine(id: ModuleId) -> Result<(Arc<Module>, Engine), String> {
     let g = mutex().lock().map_err(|e| e.to_string())?;
-    g.artifacts
+    let module = g
+        .artifacts
         .get(&id)
         .cloned()
-        .ok_or_else(|| format!("pg_wasm: no wasmer module for id {}", id.0))
+        .ok_or_else(|| format!("pg_wasm: no wasmer module for id {}", id.0))?;
+    let engine = g.engine.clone();
+    Ok((module, engine))
 }
 
 fn instantiate(id: ModuleId) -> Result<(Instance, Store), String> {
@@ -256,8 +265,8 @@ fn instantiate(id: ModuleId) -> Result<(Instance, Store), String> {
             id.0
         )
     })?;
-    let module = get_module(id)?;
-    let mut store = Store::default();
+    let (module, engine) = module_and_engine(id)?;
+    let mut store = Store::new(engine);
     let import_object = imports! {};
     let instance = Instance::new(&mut store, &module, &import_object)
         .map_err(|e| format!("pg_wasm: wasmer instantiate: {e}"))?;
@@ -538,8 +547,6 @@ pub fn call_bool_result_arity2(
     call_i32_arity2(module, export, if a { 1 } else { 0 }, if b { 1 } else { 0 }).map(|v| v != 0)
 }
 
-pub struct WasmerBackend;
-
 impl WasmRuntimeBackend for WasmerBackend {
     fn kind(&self) -> RuntimeKind {
         RuntimeKind::Wasmer
@@ -550,7 +557,6 @@ impl WasmRuntimeBackend for WasmerBackend {
     }
 }
 
-/// For dispatch tests; Wasmer has no global engine handle like Wasmtime.
 #[cfg(any(test, feature = "pg_test"))]
 pub fn execution_backend() -> super::selection::ModuleExecutionBackend {
     super::selection::ModuleExecutionBackend::Wasmer
