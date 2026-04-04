@@ -270,3 +270,21 @@ pub fn call_f64_arity2(
         ModuleExecutionBackend::Extism => extism_backend::call_f64_arity2(module, export, a, b),
     }
 }
+
+#[cfg(feature = "runtime-wasmtime")]
+pub fn call_component_export_dynamic(
+    backend: ModuleExecutionBackend,
+    module: ModuleId,
+    export: &str,
+    params: &[wasmtime::component::Val],
+) -> Result<Vec<wasmtime::component::Val>, String> {
+    match backend {
+        ModuleExecutionBackend::Wasmtime => {
+            wasmtime_backend::call_component_export_dynamic(module, export, params)
+        }
+        #[cfg(feature = "runtime-extism")]
+        ModuleExecutionBackend::Extism => Err(
+            "pg_wasm: dynamic component calls are not available on the Extism backend".into(),
+        ),
+    }
+}

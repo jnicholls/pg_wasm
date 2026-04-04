@@ -27,9 +27,14 @@ pub enum PgWasmTypeKind {
     F32,
     F64,
     /// UTF-8 text: wasm `(i32, i32)` ptr+len; see `crate::runtime::wasmtime_backend::MEM_IO_INPUT_BASE`.
+    /// For WebAssembly components, `string` uses the component-model dynamic call path instead.
     String,
     /// Raw bytes; `jsonb` uses JSON UTF-8 bytes (same wasm shape as [`PgWasmTypeKind::String`]).
     Bytes,
+    /// PostgreSQL `int4[]` for component `list<s32>` / `list<u32>` (and similar integer lists).
+    Int4Array,
+    /// PostgreSQL `text[]` for component `list<string>`.
+    TextArray,
 }
 
 /// Describes one SQL argument position for dynamic dispatch.
@@ -55,12 +60,62 @@ impl Default for PgWasmReturnDesc {
     }
 }
 
+/// Structural typing for a subset of WIT / component interface types (host-side mirror).
+///
+/// Used with [`ExportSignature::component_dynamic_plan`] to lift and lower
+/// component-model dynamic values against PostgreSQL datums.
+///
+/// **Supported for auto-mapped component exports:** integer and float scalars, `char`, `string`,
+/// `list<u8>` (`bytea`), `list<s32|u32>` (`int4[]`), `list<string>` (`text[]`), and aggregate types
+/// (`record`, `tuple`, `variant`, `option`, `result`, `enum`, `flags`) via `jsonb` with the JSON
+/// encoding in `pg_wasm::runtime::component_marshal` (Wasmtime feature). **Not supported:** resources
+/// (`own` / `borrow`), futures, streams, `error-context`, and nested lists other than the specific
+/// list element types above.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MarshalType {
+    Bool,
+    S8,
+    U8,
+    S16,
+    U16,
+    S32,
+    U32,
+    S64,
+    U64,
+    F32,
+    F64,
+    Char,
+    String,
+    List(Box<MarshalType>),
+    Record(Vec<(String, MarshalType)>),
+    Tuple(Vec<MarshalType>),
+    Variant(Vec<(String, Option<MarshalType>)>),
+    Option(Box<MarshalType>),
+    Result {
+        ok: Option<Box<MarshalType>>,
+        err: Option<Box<MarshalType>>,
+    },
+    Enum(Vec<String>),
+    Flags(Vec<String>),
+}
+
+/// Full parameter/result [`MarshalType`] plan for one component function export.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComponentDynCallPlan {
+    pub params: Vec<MarshalType>,
+    pub result: MarshalType,
+}
+
 /// Per-export signature for catalog + trampoline (WIT layout reserved).
 #[derive(Clone, Debug, Default)]
 pub struct ExportSignature {
     pub args: Vec<PgWasmArgDesc>,
     pub ret: PgWasmReturnDesc,
+    /// Optional WIT interface note from load `exports` JSON (reserved for diagnostics).
+    #[allow(dead_code)]
     pub wit_interface: Option<String>,
+    /// When set, this export uses the host runtime’s dynamic component `Func::call` path with this plan.
+    pub component_dynamic_plan: Option<ComponentDynCallPlan>,
 }
 
 /// Parse `exports` object from load `options` JSON (see [`ExportTypeHint`]).
@@ -140,8 +195,10 @@ pub fn sql_name_to_pg_descriptor(name: &str) -> Result<(Oid, PgWasmTypeKind), St
         "text" | "varchar" => Ok((pg_sys::TEXTOID, PgWasmTypeKind::String)),
         "bytea" => Ok((pg_sys::BYTEAOID, PgWasmTypeKind::Bytes)),
         "json" | "jsonb" => Ok((pg_sys::JSONBOID, PgWasmTypeKind::Bytes)),
+        "int4[]" | "integer[]" => Ok((pg_sys::INT4ARRAYOID, PgWasmTypeKind::Int4Array)),
+        "text[]" => Ok((pg_sys::TEXTARRAYOID, PgWasmTypeKind::TextArray)),
         other => Err(format!(
-            "unknown SQL type name {other:?} (use int2–int8, bool, float4/8, text, bytea, json/jsonb, or a numeric OID)"
+            "unknown SQL type name {other:?} (use int2–int8, bool, float4/8, text, text[], bytea, int4[], json/jsonb, or a numeric OID)"
         )),
     }
 }
@@ -164,5 +221,153 @@ pub fn signature_from_hint(hint: &ExportTypeHint) -> ExportSignature {
         args,
         ret,
         wit_interface: hint.wit_interface.clone(),
+        component_dynamic_plan: None,
     }
+}
+
+/// `true` when this plan cannot be expressed with the legacy `get_typed_func` tuple fast path.
+pub fn component_plan_needs_dynamic_call(plan: &ComponentDynCallPlan) -> bool {
+    plan.params.iter().any(marshal_type_non_primitive_fast)
+        || marshal_type_non_primitive_fast(&plan.result)
+}
+
+fn marshal_type_non_primitive_fast(m: &MarshalType) -> bool {
+    match m {
+        MarshalType::Bool
+        | MarshalType::S32
+        | MarshalType::U32
+        | MarshalType::S64
+        | MarshalType::U64
+        | MarshalType::F32
+        | MarshalType::F64 => false,
+        MarshalType::S8
+        | MarshalType::U8
+        | MarshalType::S16
+        | MarshalType::U16
+        | MarshalType::Char
+        | MarshalType::String
+        | MarshalType::List(_)
+        | MarshalType::Record(_)
+        | MarshalType::Tuple(_)
+        | MarshalType::Variant(_)
+        | MarshalType::Option(_)
+        | MarshalType::Result { .. }
+        | MarshalType::Enum(_)
+        | MarshalType::Flags(_) => true,
+    }
+}
+
+/// Build SQL-facing argument/return descriptors from a marshal plan.
+pub fn pg_descriptors_from_marshal_plan(
+    plan: &ComponentDynCallPlan,
+) -> Option<(Vec<PgWasmArgDesc>, PgWasmReturnDesc)> {
+    let args: Option<Vec<PgWasmArgDesc>> = plan
+        .params
+        .iter()
+        .map(marshal_type_to_arg_desc)
+        .collect();
+    let args = args?;
+    let ret = marshal_type_to_return_desc(&plan.result)?;
+    Some((args, ret))
+}
+
+fn marshal_type_to_arg_desc(m: &MarshalType) -> Option<PgWasmArgDesc> {
+    Some(match m {
+        MarshalType::Bool => PgWasmArgDesc {
+            pg_oid: pg_sys::BOOLOID,
+            kind: PgWasmTypeKind::Bool,
+        },
+        MarshalType::S8 | MarshalType::U8 | MarshalType::S16 | MarshalType::U16 => PgWasmArgDesc {
+            pg_oid: pg_sys::INT4OID,
+            kind: PgWasmTypeKind::I32,
+        },
+        MarshalType::S32 | MarshalType::U32 => PgWasmArgDesc {
+            pg_oid: pg_sys::INT4OID,
+            kind: PgWasmTypeKind::I32,
+        },
+        MarshalType::S64 | MarshalType::U64 => PgWasmArgDesc {
+            pg_oid: pg_sys::INT8OID,
+            kind: PgWasmTypeKind::I64,
+        },
+        MarshalType::F32 => PgWasmArgDesc {
+            pg_oid: pg_sys::FLOAT4OID,
+            kind: PgWasmTypeKind::F32,
+        },
+        MarshalType::F64 => PgWasmArgDesc {
+            pg_oid: pg_sys::FLOAT8OID,
+            kind: PgWasmTypeKind::F64,
+        },
+        MarshalType::Char | MarshalType::String => PgWasmArgDesc {
+            pg_oid: pg_sys::TEXTOID,
+            kind: PgWasmTypeKind::String,
+        },
+        MarshalType::List(inner) => match inner.as_ref() {
+            MarshalType::U8 => PgWasmArgDesc {
+                pg_oid: pg_sys::BYTEAOID,
+                kind: PgWasmTypeKind::Bytes,
+            },
+            MarshalType::S32 | MarshalType::U32 => PgWasmArgDesc {
+                pg_oid: pg_sys::INT4ARRAYOID,
+                kind: PgWasmTypeKind::Int4Array,
+            },
+            MarshalType::String => PgWasmArgDesc {
+                pg_oid: pg_sys::TEXTARRAYOID,
+                kind: PgWasmTypeKind::TextArray,
+            },
+            _ => return None,
+        },
+        MarshalType::Record(_)
+        | MarshalType::Tuple(_)
+        | MarshalType::Variant(_)
+        | MarshalType::Enum(_)
+        | MarshalType::Flags(_)
+        | MarshalType::Option(_)
+        | MarshalType::Result { .. } => PgWasmArgDesc {
+            pg_oid: pg_sys::JSONBOID,
+            kind: PgWasmTypeKind::Bytes,
+        },
+    })
+}
+
+fn marshal_type_to_return_desc(m: &MarshalType) -> Option<PgWasmReturnDesc> {
+    let a = marshal_type_to_arg_desc(m)?;
+    Some(PgWasmReturnDesc {
+        pg_oid: a.pg_oid,
+        kind: a.kind,
+    })
+}
+
+/// Returns `true` if the export hint matches the signature implied by the WIT-backed marshal plan.
+pub fn export_hint_matches_marshal_plan(
+    hint: &ExportTypeHint,
+    plan: &ComponentDynCallPlan,
+) -> Result<(), String> {
+    let Some((args, ret)) = pg_descriptors_from_marshal_plan(plan) else {
+        return Err(
+            "pg_wasm: could not derive PostgreSQL types from component export (unsupported WIT shape)"
+                .into(),
+        );
+    };
+    if hint.args.len() != args.len() {
+        return Err(format!(
+            "pg_wasm: export hint lists {} arguments but WIT signature has {}",
+            hint.args.len(),
+            args.len()
+        ));
+    }
+    for (i, ((ho, hk), d)) in hint.args.iter().zip(&args).enumerate() {
+        if *ho != d.pg_oid || *hk != d.kind {
+            return Err(format!(
+                "pg_wasm: export hint arg[{i}] (oid={ho}, kind={hk:?}) does not match WIT mapping (oid={}, kind={:?})",
+                d.pg_oid, d.kind
+            ));
+        }
+    }
+    if hint.ret.0 != ret.pg_oid || hint.ret.1 != ret.kind {
+        return Err(format!(
+            "pg_wasm: export hint return (oid={}, kind={:?}) does not match WIT mapping (oid={}, kind={:?})",
+            hint.ret.0, hint.ret.1, ret.pg_oid, ret.kind
+        ));
+    }
+    Ok(())
 }

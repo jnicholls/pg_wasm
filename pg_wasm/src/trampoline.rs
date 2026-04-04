@@ -9,6 +9,16 @@ use crate::mapping::{ExportSignature, PgWasmReturnDesc, PgWasmTypeKind};
 
 use crate::registry::RegisteredFunction;
 
+#[cfg(feature = "runtime-wasmtime")]
+use crate::abi::WasmAbiKind;
+#[cfg(feature = "runtime-wasmtime")]
+use crate::mapping::ComponentDynCallPlan;
+
+#[cfg(feature = "runtime-wasmtime")]
+use crate::runtime::component_marshal::{
+    DynReturnPayload, PreparedComponentArg, args_to_vals, val_to_return_payload,
+};
+
 /// `CREATE FUNCTION … AS '$libdir/pg_wasm', '…'` link name for the trampoline body.
 pub const TRAMPOLINE_PG_SYMBOL: &str = "pg_wasm_udf_trampoline";
 
@@ -55,6 +65,8 @@ struct PreparedWasmCall {
 }
 
 enum WasmInvocation {
+    #[cfg(feature = "runtime-wasmtime")]
+    ComponentDynamic(Vec<PreparedComponentArg>),
     MemInOut(Vec<u8>),
     I32Arity0,
     I32Arity1(i32),
@@ -79,6 +91,10 @@ enum WasmValue {
     I64(i64),
     F32(f32),
     F64(f64),
+    /// `int4[]` component return.
+    Int32Array(Vec<i32>),
+    /// `text[]` component return.
+    StringArray(Vec<String>),
 }
 
 fn prepare_wasm_trampoline(fcinfo: pg_sys::FunctionCallInfo) -> PreparedWasmCall {
@@ -95,6 +111,27 @@ fn prepare_wasm_trampoline(fcinfo: pg_sys::FunctionCallInfo) -> PreparedWasmCall
         None => error!("pg_wasm: no wasm dispatch entry for function OID {}", oid),
     };
     let sig = &reg.signature;
+    #[cfg(feature = "runtime-wasmtime")]
+    let inv = if sig.component_dynamic_plan.is_some() {
+        match crate::registry::module_abi(reg.module_id) {
+            Some(WasmAbiKind::ComponentModel) => {
+                let plan = sig
+                    .component_dynamic_plan
+                    .as_ref()
+                    .expect("component_dynamic_plan");
+                WasmInvocation::ComponentDynamic(prepare_component_dynamic_args(sig, plan, fcinfo))
+            }
+            _ => error!(
+                "pg_wasm: component_dynamic_plan registered for a non-component module (module id {})",
+                reg.module_id.0
+            ),
+        }
+    } else if uses_buffer_io(sig) {
+        prepare_buffer_invocation(sig, fcinfo)
+    } else {
+        prepare_scalar_invocation(&reg, fcinfo)
+    };
+    #[cfg(not(feature = "runtime-wasmtime"))]
     let inv = if uses_buffer_io(sig) {
         prepare_buffer_invocation(sig, fcinfo)
     } else {
@@ -120,6 +157,8 @@ fn run_wasm_isolated(p: &PreparedWasmCall) -> Result<WasmValue, String> {
         call_i32_arity0, call_i32_arity1, call_i32_arity2, call_i64_arity0, call_i64_arity1,
         call_mem_in_out,
     };
+    #[cfg(feature = "runtime-wasmtime")]
+    use crate::runtime::dispatch::call_component_export_dynamic;
     let mid = p.reg.module_id;
     let ex = p.reg.export_name.as_str();
     let backend = crate::registry::module_execution_backend(mid).ok_or_else(|| {
@@ -129,6 +168,24 @@ fn run_wasm_isolated(p: &PreparedWasmCall) -> Result<WasmValue, String> {
         )
     })?;
     match &p.inv {
+        #[cfg(feature = "runtime-wasmtime")]
+        WasmInvocation::ComponentDynamic(prepared) => {
+            let plan = p
+                .reg
+                .signature
+                .component_dynamic_plan
+                .as_ref()
+                .expect("component_dynamic_plan");
+            let vals = args_to_vals(&plan.params, prepared)?;
+            let mut out = call_component_export_dynamic(backend, mid, ex, &vals)?;
+            let ret_val = out.pop().ok_or_else(|| {
+                "pg_wasm: component function returned no values".to_string()
+            })?;
+            dyn_payload_to_wasm_value(
+                val_to_return_payload(ret_val, &plan.result)?,
+                &p.reg.signature.ret,
+            )
+        }
         WasmInvocation::MemInOut(buf) => {
             call_mem_in_out(backend, mid, ex, buf).map(WasmValue::Bytes)
         }
@@ -180,6 +237,9 @@ fn finish_wasm_trampoline_ok(
 }
 
 fn uses_buffer_io(sig: &ExportSignature) -> bool {
+    if sig.component_dynamic_plan.is_some() {
+        return false;
+    }
     let buf_ret = matches!(sig.ret.kind, PgWasmTypeKind::String | PgWasmTypeKind::Bytes);
     if !buf_ret {
         return false;
@@ -312,6 +372,20 @@ fn prepare_scalar_invocation(
 fn wasm_value_into_datum(reg: &RegisteredFunction, v: WasmValue) -> pg_sys::Datum {
     let sig = &reg.signature;
     match v {
+        WasmValue::Int32Array(v) => {
+            if sig.ret.kind != PgWasmTypeKind::Int4Array {
+                error!("pg_wasm: internal error: int4[] wasm value for unexpected PG return");
+            }
+            v.into_datum()
+                .unwrap_or_else(|| error!("pg_wasm: int4[] into_datum failed"))
+        }
+        WasmValue::StringArray(v) => {
+            if sig.ret.kind != PgWasmTypeKind::TextArray {
+                error!("pg_wasm: internal error: text[] wasm value for unexpected PG return");
+            }
+            v.into_datum()
+                .unwrap_or_else(|| error!("pg_wasm: text[] into_datum failed"))
+        }
         WasmValue::Bytes(b) => buffer_output_datum(&sig.ret, &b),
         WasmValue::I32(v) => match (sig.ret.pg_oid, sig.ret.kind) {
             (pg_sys::INT4OID, PgWasmTypeKind::I32) => v
@@ -359,4 +433,90 @@ fn buffer_output_datum(ret: &PgWasmReturnDesc, out: &[u8]) -> pg_sys::Datum {
             .unwrap_or_else(|| error!("pg_wasm: bytea into_datum failed")),
         _ => error!("pg_wasm: unsupported buffer return type"),
     }
+}
+
+#[cfg(feature = "runtime-wasmtime")]
+fn prepare_component_dynamic_args(
+    sig: &ExportSignature,
+    plan: &ComponentDynCallPlan,
+    fcinfo: pg_sys::FunctionCallInfo,
+) -> Vec<PreparedComponentArg> {
+    if sig.args.len() != plan.params.len() {
+        error!("pg_wasm: internal error: signature args vs marshal plan length mismatch");
+    }
+    (0..sig.args.len())
+        .map(|i| read_one_component_dynamic_arg(&sig.args[i], fcinfo, i))
+        .collect()
+}
+
+#[cfg(feature = "runtime-wasmtime")]
+fn read_one_component_dynamic_arg(
+    desc: &crate::mapping::PgWasmArgDesc,
+    fcinfo: pg_sys::FunctionCallInfo,
+    i: usize,
+) -> PreparedComponentArg {
+    match desc.kind {
+        PgWasmTypeKind::Bool => PreparedComponentArg::Bool(
+            unsafe { pg_getarg::<bool>(fcinfo, i) }.expect("pg_wasm: NULL strict arg"),
+        ),
+        PgWasmTypeKind::I32 => PreparedComponentArg::I32(
+            unsafe { pg_getarg::<i32>(fcinfo, i) }.expect("pg_wasm: NULL strict arg"),
+        ),
+        PgWasmTypeKind::I64 => PreparedComponentArg::I64(
+            unsafe { pg_getarg::<i64>(fcinfo, i) }.expect("pg_wasm: NULL strict arg"),
+        ),
+        PgWasmTypeKind::F32 => PreparedComponentArg::F32(
+            unsafe { pg_getarg::<f32>(fcinfo, i) }.expect("pg_wasm: NULL strict arg"),
+        ),
+        PgWasmTypeKind::F64 => PreparedComponentArg::F64(
+            unsafe { pg_getarg::<f64>(fcinfo, i) }.expect("pg_wasm: NULL strict arg"),
+        ),
+        PgWasmTypeKind::String => PreparedComponentArg::String(
+            unsafe { pg_getarg::<String>(fcinfo, i) }.expect("pg_wasm: NULL strict arg"),
+        ),
+        PgWasmTypeKind::Bytes if desc.pg_oid == pg_sys::JSONBOID => {
+            let j = unsafe { pg_getarg::<JsonB>(fcinfo, i) }.expect("pg_wasm: NULL jsonb arg");
+            PreparedComponentArg::Json(j.0)
+        }
+        PgWasmTypeKind::Bytes => PreparedComponentArg::Bytes(
+            unsafe { pg_getarg::<Vec<u8>>(fcinfo, i) }.expect("pg_wasm: NULL bytea arg"),
+        ),
+        PgWasmTypeKind::Int4Array => PreparedComponentArg::Int32Array(
+            unsafe { pg_getarg::<Vec<i32>>(fcinfo, i) }
+                .expect("pg_wasm: NULL or invalid int4[] argument"),
+        ),
+        PgWasmTypeKind::TextArray => PreparedComponentArg::StringArray(
+            unsafe { pg_getarg::<Vec<String>>(fcinfo, i) }
+                .expect("pg_wasm: NULL or invalid text[] argument"),
+        ),
+    }
+}
+
+#[cfg(feature = "runtime-wasmtime")]
+fn dyn_payload_to_wasm_value(
+    p: DynReturnPayload,
+    ret: &PgWasmReturnDesc,
+) -> Result<WasmValue, String> {
+    Ok(match (p, ret.kind) {
+        (DynReturnPayload::Bool(v), PgWasmTypeKind::Bool) => WasmValue::Bool(v),
+        (DynReturnPayload::I32(v), PgWasmTypeKind::I32) => WasmValue::I32(v),
+        (DynReturnPayload::I64(v), PgWasmTypeKind::I64) => WasmValue::I64(v),
+        (DynReturnPayload::F32(v), PgWasmTypeKind::F32) => WasmValue::F32(v),
+        (DynReturnPayload::F64(v), PgWasmTypeKind::F64) => WasmValue::F64(v),
+        (DynReturnPayload::String(s), PgWasmTypeKind::String) => WasmValue::Bytes(s.into_bytes()),
+        (DynReturnPayload::Bytes(b), PgWasmTypeKind::Bytes) => WasmValue::Bytes(b),
+        (DynReturnPayload::Int32Array(v), PgWasmTypeKind::Int4Array) => WasmValue::Int32Array(v),
+        (DynReturnPayload::StringArray(v), PgWasmTypeKind::TextArray) => WasmValue::StringArray(v),
+        (DynReturnPayload::Json(j), PgWasmTypeKind::Bytes) if ret.pg_oid == pg_sys::JSONBOID => {
+            WasmValue::Bytes(
+                serde_json::to_vec(&j).map_err(|e| format!("pg_wasm: json encode: {e}"))?,
+            )
+        }
+        _ => {
+            return Err(format!(
+                "pg_wasm: component return does not match SQL return descriptor ({:?})",
+                ret.kind
+            ));
+        }
+    })
 }

@@ -23,8 +23,9 @@ use crate::{
     config::HostPolicy,
     guc,
     mapping::{
-        ExportHintMap, ExportSignature, ExportTypeHint, PgWasmArgDesc, PgWasmReturnDesc,
-        PgWasmTypeKind, signature_from_hint,
+        ComponentDynCallPlan, ExportHintMap, ExportSignature, ExportTypeHint, MarshalType,
+        PgWasmArgDesc, PgWasmReturnDesc, PgWasmTypeKind, component_plan_needs_dynamic_call,
+        export_hint_matches_marshal_plan, pg_descriptors_from_marshal_plan, signature_from_hint,
     },
     registry::{self, ModuleId},
 };
@@ -157,129 +158,141 @@ fn component_imports_wasi(comp: &Component) -> bool {
         .any(|(name, _)| name.starts_with("wasi:"))
 }
 
-fn hint_kind_matches_component_type(kind: &PgWasmTypeKind, t: &component::types::Type) -> bool {
-    use component::types::Type;
-    match (kind, t) {
-        (PgWasmTypeKind::Bool, Type::Bool) => true,
-        (PgWasmTypeKind::I32, Type::S32 | Type::U32) => true,
-        (PgWasmTypeKind::I64, Type::S64 | Type::U64) => true,
-        (PgWasmTypeKind::F32, Type::Float32) => true,
-        (PgWasmTypeKind::F64, Type::Float64) => true,
-        _ => false,
-    }
+fn list_element_marshal_supported(el: &MarshalType) -> bool {
+    matches!(
+        el,
+        MarshalType::U8 | MarshalType::S32 | MarshalType::U32 | MarshalType::String
+    )
 }
 
-fn hint_matches_component_func(
-    hint: &ExportTypeHint,
+fn wit_type_to_marshal(t: &component::types::Type) -> Option<MarshalType> {
+    use component::types::Type;
+    Some(match t {
+        Type::Bool => MarshalType::Bool,
+        Type::S8 => MarshalType::S8,
+        Type::U8 => MarshalType::U8,
+        Type::S16 => MarshalType::S16,
+        Type::U16 => MarshalType::U16,
+        Type::S32 => MarshalType::S32,
+        Type::U32 => MarshalType::U32,
+        Type::S64 => MarshalType::S64,
+        Type::U64 => MarshalType::U64,
+        Type::Float32 => MarshalType::F32,
+        Type::Float64 => MarshalType::F64,
+        Type::Char => MarshalType::Char,
+        Type::String => MarshalType::String,
+        Type::List(l) => {
+            let el = wit_type_to_marshal(&l.ty())?;
+            if list_element_marshal_supported(&el) {
+                MarshalType::List(Box::new(el))
+            } else {
+                return None;
+            }
+        }
+        Type::Record(r) => {
+            let mut fields = Vec::new();
+            for f in r.fields() {
+                let m = wit_type_to_marshal(&f.ty)?;
+                fields.push((f.name.to_string(), m));
+            }
+            MarshalType::Record(fields)
+        }
+        Type::Tuple(tp) => {
+            let mut types = Vec::new();
+            for ty in tp.types() {
+                types.push(wit_type_to_marshal(&ty)?);
+            }
+            MarshalType::Tuple(types)
+        }
+        Type::Variant(v) => {
+            let mut cases = Vec::new();
+            for c in v.cases() {
+                let inner = match &c.ty {
+                    None => None,
+                    Some(ty) => wit_type_to_marshal(ty),
+                };
+                if c.ty.is_some() && inner.is_none() {
+                    return None;
+                }
+                cases.push((c.name.to_string(), inner));
+            }
+            MarshalType::Variant(cases)
+        }
+        Type::Enum(e) => MarshalType::Enum(e.names().map(|n| n.to_string()).collect()),
+        Type::Option(o) => MarshalType::Option(Box::new(wit_type_to_marshal(&o.ty())?)),
+        Type::Result(r) => {
+            let ok = match r.ok() {
+                None => None,
+                Some(ty) => match wit_type_to_marshal(&ty) {
+                    Some(m) => Some(Box::new(m)),
+                    None => return None,
+                },
+            };
+            let err = match r.err() {
+                None => None,
+                Some(ty) => match wit_type_to_marshal(&ty) {
+                    Some(m) => Some(Box::new(m)),
+                    None => return None,
+                },
+            };
+            MarshalType::Result { ok, err }
+        }
+        Type::Flags(f) => MarshalType::Flags(f.names().map(|n| n.to_string()).collect()),
+        Type::Own(_) | Type::Borrow(_) | Type::Future(_) | Type::Stream(_) | Type::ErrorContext => {
+            return None;
+        }
+    })
+}
+
+fn component_func_to_marshal_plan(
     f: &component::types::ComponentFunc,
-) -> Result<(), String> {
+) -> Result<ComponentDynCallPlan, String> {
     if f.async_() {
         return Err("pg_wasm: component export is async; not supported".into());
     }
-    let params: Vec<_> = f.params().collect();
     let results: Vec<_> = f.results().collect();
-    if params.len() != hint.args.len() {
-        return Err(format!(
-            "pg_wasm: component export has {} parameters but export hint lists {}",
-            params.len(),
-            hint.args.len()
-        ));
-    }
-    for ((_, hk), (_, pt)) in hint.args.iter().zip(params.iter()) {
-        if !hint_kind_matches_component_type(hk, pt) {
-            return Err(format!(
-                "pg_wasm: component parameter type does not match export hint (hint={hk:?}, wit={pt:?})"
-            ));
-        }
-    }
     if results.len() != 1 {
         return Err(format!(
             "pg_wasm: component export must have a single result for this mapping (has {})",
             results.len()
         ));
     }
-    if !hint_kind_matches_component_type(&hint.ret.1, &results[0]) {
-        return Err(format!(
-            "pg_wasm: component return type {:?} does not match export hint {:?}",
-            results[0], hint.ret.1
-        ));
-    }
-    Ok(())
+    let params: Vec<_> = f.params().map(|(_, t)| t).collect();
+    let params_m: Option<Vec<MarshalType>> = params.iter().map(wit_type_to_marshal).collect();
+    let Some(params_m) = params_m else {
+        return Err(
+            "pg_wasm: component parameter uses an unsupported WIT type for PostgreSQL mapping"
+                .into(),
+        );
+    };
+    let Some(result_m) = wit_type_to_marshal(&results[0]) else {
+        return Err(
+            "pg_wasm: component result uses an unsupported WIT type for PostgreSQL mapping".into(),
+        );
+    };
+    Ok(ComponentDynCallPlan {
+        params: params_m,
+        result: result_m,
+    })
 }
 
-fn map_component_func_to_sig(f: &component::types::ComponentFunc) -> Option<ExportSignature> {
-    if f.async_() {
-        return None;
-    }
-    let params: Vec<_> = f.params().map(|(_, t)| t).collect();
-    let results: Vec<_> = f.results().collect();
-    if results.len() != 1 {
-        return None;
-    }
-    let args: Vec<PgWasmArgDesc> = params
-        .iter()
-        .map(component_type_to_arg)
-        .collect::<Option<_>>()?;
-    let ret = component_type_to_return(&results[0])?;
+fn export_signature_from_component_plan(
+    plan: ComponentDynCallPlan,
+    wit_interface: Option<String>,
+) -> Option<ExportSignature> {
+    let (args, ret) = pg_descriptors_from_marshal_plan(&plan)?;
+    let dynamic = component_plan_needs_dynamic_call(&plan).then(|| plan);
     Some(ExportSignature {
         args,
         ret,
-        wit_interface: None,
+        wit_interface,
+        component_dynamic_plan: dynamic,
     })
 }
 
-fn component_type_to_arg(t: &component::types::Type) -> Option<PgWasmArgDesc> {
-    use component::types::Type;
-    Some(match t {
-        Type::Bool => PgWasmArgDesc {
-            pg_oid: pgrx::pg_sys::BOOLOID,
-            kind: PgWasmTypeKind::Bool,
-        },
-        Type::S32 | Type::U32 => PgWasmArgDesc {
-            pg_oid: pgrx::pg_sys::INT4OID,
-            kind: PgWasmTypeKind::I32,
-        },
-        Type::S64 | Type::U64 => PgWasmArgDesc {
-            pg_oid: pgrx::pg_sys::INT8OID,
-            kind: PgWasmTypeKind::I64,
-        },
-        Type::Float32 => PgWasmArgDesc {
-            pg_oid: pgrx::pg_sys::FLOAT4OID,
-            kind: PgWasmTypeKind::F32,
-        },
-        Type::Float64 => PgWasmArgDesc {
-            pg_oid: pgrx::pg_sys::FLOAT8OID,
-            kind: PgWasmTypeKind::F64,
-        },
-        _ => return None,
-    })
-}
-
-fn component_type_to_return(t: &component::types::Type) -> Option<PgWasmReturnDesc> {
-    use component::types::Type;
-    Some(match t {
-        Type::Bool => PgWasmReturnDesc {
-            pg_oid: pgrx::pg_sys::BOOLOID,
-            kind: PgWasmTypeKind::Bool,
-        },
-        Type::S32 | Type::U32 => PgWasmReturnDesc {
-            pg_oid: pgrx::pg_sys::INT4OID,
-            kind: PgWasmTypeKind::I32,
-        },
-        Type::S64 | Type::U64 => PgWasmReturnDesc {
-            pg_oid: pgrx::pg_sys::INT8OID,
-            kind: PgWasmTypeKind::I64,
-        },
-        Type::Float32 => PgWasmReturnDesc {
-            pg_oid: pgrx::pg_sys::FLOAT4OID,
-            kind: PgWasmTypeKind::F32,
-        },
-        Type::Float64 => PgWasmReturnDesc {
-            pg_oid: pgrx::pg_sys::FLOAT8OID,
-            kind: PgWasmTypeKind::F64,
-        },
-        _ => return None,
-    })
+fn map_component_export_auto(f: &component::types::ComponentFunc) -> Option<ExportSignature> {
+    let plan = component_func_to_marshal_plan(f).ok()?;
+    export_signature_from_component_plan(plan, None)
 }
 
 const WASM_PAGE_BYTES: u64 = 65536;
@@ -290,6 +303,44 @@ fn wasmtime_to_host_string(err: wasmtime::Error) -> String {
     err.downcast_ref::<wasmtime::Trap>()
         .map(|t| format!("{t:?}"))
         .unwrap_or_else(|| format!("{err:#}"))
+}
+
+/// Dynamic `component::Func::call` for exports described by [`ExportSignature::component_dynamic_plan`].
+pub fn call_component_export_dynamic(
+    module: ModuleId,
+    export: &str,
+    params: &[component::Val],
+) -> Result<Vec<component::Val>, String> {
+    let mut results = vec![component::Val::S32(0)];
+    match instantiate_bundle(module)? {
+        InstanceBundle::ComponentPlain {
+            mut store,
+            instance,
+        } => {
+            let func = instance
+                .get_func(&mut store, export)
+                .ok_or_else(|| format!("pg_wasm: component has no function export {export:?}"))?;
+            func
+                .call(&mut store, params, &mut results)
+                .map_err(wasmtime_to_host_string)?;
+            Ok(results)
+        }
+        InstanceBundle::ComponentWasi {
+            mut store,
+            instance,
+        } => {
+            let func = instance
+                .get_func(&mut store, export)
+                .ok_or_else(|| format!("pg_wasm: component has no function export {export:?}"))?;
+            func
+                .call(&mut store, params, &mut results)
+                .map_err(wasmtime_to_host_string)?;
+            Ok(results)
+        }
+        _ => Err(
+            "pg_wasm: internal error: dynamic component call requires a component instance".into(),
+        ),
+    }
 }
 
 fn store_limits_for_module(module: ModuleId) -> StoreLimits {
@@ -543,6 +594,12 @@ fn wasm_types_for_hint(hint: &ExportTypeHint) -> Result<(Vec<ValType>, Vec<ValTy
                 params.push(ValType::I32);
                 params.push(ValType::I32);
             }
+            PgWasmTypeKind::Int4Array | PgWasmTypeKind::TextArray => {
+                return Err(
+                    "pg_wasm: int4[] / text[] export hints apply to WebAssembly components only"
+                        .into(),
+                );
+            }
         }
     }
     let results = vec![match hint.ret.1 {
@@ -551,6 +608,11 @@ fn wasm_types_for_hint(hint: &ExportTypeHint) -> Result<(Vec<ValType>, Vec<ValTy
         PgWasmTypeKind::F32 => ValType::F32,
         PgWasmTypeKind::F64 => ValType::F64,
         PgWasmTypeKind::String | PgWasmTypeKind::Bytes => ValType::I32,
+        PgWasmTypeKind::Int4Array | PgWasmTypeKind::TextArray => {
+            return Err(
+                "pg_wasm: int4[] / text[] export hints apply to WebAssembly components only".into(),
+            );
+        }
     }];
     Ok((params, results))
 }
@@ -1323,16 +1385,18 @@ impl WasmtimeBackend {
                 continue;
             };
             if let Some(hint) = export_hints.get(name) {
-                hint_matches_component_func(hint, &f)?;
-                if uses_linear_memory(hint) {
+                let plan = component_func_to_marshal_plan(&f)?;
+                export_hint_matches_marshal_plan(hint, &plan)?;
+                let Some(sig) = export_signature_from_component_plan(plan, hint.wit_interface.clone())
+                else {
                     return Err(format!(
-                        "pg_wasm: export {name:?} uses buffer-style types; not supported for components"
+                        "pg_wasm: export {name:?}: could not map WIT types to PostgreSQL"
                     ));
-                }
-                out.push((name.to_string(), signature_from_hint(hint)));
+                };
+                out.push((name.to_string(), sig));
                 continue;
             }
-            if let Some(sig) = map_component_func_to_sig(&f) {
+            if let Some(sig) = map_component_export_auto(&f) {
                 out.push((name.to_string(), sig));
             }
         }
@@ -1433,5 +1497,63 @@ fn map_export_sig_auto(params: &[ValType], results: &[ValType]) -> Option<Export
             kind: ret.1,
         },
         wit_interface: None,
+        component_dynamic_plan: None,
     })
+}
+
+#[cfg(test)]
+mod component_export_tests {
+    use wasmtime::component::Val;
+
+    use crate::abi::WasmAbiKind;
+    use crate::config::{ModuleResourceLimits, PolicyOverrides};
+    use crate::mapping::ExportHintMap;
+    use crate::registry::ModuleId;
+
+    use super::{
+        call_component_export_dynamic, compile_store_and_list_exports, remove_compiled_module,
+    };
+
+    #[test]
+    fn primitive_component_export_skips_dynamic_plan() {
+        let wasm = include_bytes!(concat!(env!("OUT_DIR"), "/test_add.component.wasm"));
+        let mid = ModuleId(910_001);
+        let (exports, _) = compile_store_and_list_exports(
+            mid,
+            wasm,
+            &ExportHintMap::new(),
+            WasmAbiKind::ComponentModel,
+        )
+        .expect("compile component fixture");
+        let (_, sig) = exports.iter().find(|(n, _)| n == "add").expect("add export");
+        assert!(sig.component_dynamic_plan.is_none());
+        remove_compiled_module(mid);
+    }
+
+    #[test]
+    fn dynamic_call_matches_typed_add() {
+        let wasm = include_bytes!(concat!(env!("OUT_DIR"), "/test_add.component.wasm"));
+        let mid = ModuleId(910_002);
+        compile_store_and_list_exports(
+            mid,
+            wasm,
+            &ExportHintMap::new(),
+            WasmAbiKind::ComponentModel,
+        )
+        .expect("compile");
+        crate::registry::record_module_needs_wasi(mid, false);
+        crate::registry::record_module_policy_overrides(mid, PolicyOverrides::default());
+        crate::registry::record_module_resource_limits(mid, ModuleResourceLimits::default());
+        crate::registry::record_module_abi(mid, WasmAbiKind::ComponentModel);
+
+        let params = [Val::S32(40), Val::S32(2)];
+        let out = call_component_export_dynamic(mid, "add", &params).expect("dynamic call");
+        assert_eq!(out.len(), 1);
+        assert!(matches!(out[0], Val::S32(42)));
+
+        let _ = crate::registry::take_module_resource_limits(mid);
+        crate::registry::take_module_wasi_and_policy(mid);
+        let _ = crate::registry::take_module_abi(mid);
+        remove_compiled_module(mid);
+    }
 }

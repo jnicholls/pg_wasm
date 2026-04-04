@@ -32,6 +32,12 @@ fn wasm_types_for_hint(hint: &ExportTypeHint) -> Result<(Vec<ValType>, Vec<ValTy
                 params.push(ValType::I32);
                 params.push(ValType::I32);
             }
+            PgWasmTypeKind::Int4Array | PgWasmTypeKind::TextArray => {
+                return Err(
+                    "pg_wasm: int4[] / text[] export hints apply to WebAssembly components only"
+                        .into(),
+                );
+            }
         }
     }
     let results = vec![match hint.ret.1 {
@@ -40,6 +46,11 @@ fn wasm_types_for_hint(hint: &ExportTypeHint) -> Result<(Vec<ValType>, Vec<ValTy
         PgWasmTypeKind::F32 => ValType::F32,
         PgWasmTypeKind::F64 => ValType::F64,
         PgWasmTypeKind::String | PgWasmTypeKind::Bytes => ValType::I32,
+        PgWasmTypeKind::Int4Array | PgWasmTypeKind::TextArray => {
+            return Err(
+                "pg_wasm: int4[] / text[] export hints apply to WebAssembly components only".into(),
+            );
+        }
     }];
     Ok((params, results))
 }
@@ -136,6 +147,7 @@ fn map_export_sig_auto(params: &[ValType], results: &[ValType]) -> Option<Export
             kind: ret.1,
         },
         wit_interface: None,
+        component_dynamic_plan: None,
     })
 }
 
