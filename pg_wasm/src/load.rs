@@ -13,7 +13,7 @@ use crate::{
     },
     proc_reg::{self, RegisterError},
     registry::{self, ModuleCatalogEntry, ModuleHooks, ModuleId, RegisteredFunction},
-    runtime::{dispatch, selection::resolve_load_backend},
+    runtime::{ModuleExecutionBackend, dispatch, selection::resolve_load_backend},
 };
 
 const WASM_MAGIC: &[u8; 4] = b"\0asm";
@@ -30,11 +30,24 @@ impl From<RegisterError> for LoadError {
     }
 }
 
+fn drop_track_b_types_for_module(types: &[(String, String)]) {
+    for (schema, tname) in types.iter().rev() {
+        let sql = format!(
+            "DROP TYPE IF EXISTS \"{}\".\"{}\" CASCADE",
+            schema.replace('"', "\"\""),
+            tname.replace('"', "\"\""),
+        );
+        let _ = Spi::run(&sql);
+    }
+}
+
 fn cleanup_failed_load(id: ModuleId, oids: &[pgrx::pg_sys::Oid], backend: crate::runtime::ModuleExecutionBackend) {
     for o in oids {
         proc_reg::drop_wasm_trampoline_proc(*o);
     }
     let _ = registry::take_module_proc_oids(id);
+    let track_b = registry::take_module_track_b_types(id);
+    drop_track_b_types_for_module(&track_b);
     registry::take_module_wasi_and_policy(id);
     crate::metrics::remove_module_memory_peak(id);
     dispatch::remove_compiled_module(backend, id);
@@ -72,7 +85,8 @@ pub fn load_from_bytes(
     let export_hints = opts.export_hints().map_err(LoadError::Message)?;
     registry::record_module_resource_limits(id, opts.resource_limits);
     registry::record_module_policy_overrides(id, opts.policy);
-    let (exports, needs_wasi) =
+    #[cfg_attr(not(feature = "runtime-wasmtime"), allow(unused_mut))]
+    let (mut exports, needs_wasi) =
         match dispatch::compile_store_and_list_exports(backend, id, wasm, &export_hints, abi) {
             Ok(x) => x,
             Err(e) => {
@@ -97,13 +111,29 @@ pub fn load_from_bytes(
         ));
     }
 
+    #[cfg(feature = "runtime-wasmtime")]
+    if abi == WasmAbiKind::ComponentModel
+        && backend == ModuleExecutionBackend::Wasmtime
+        && crate::guc::auto_create_component_types()
+    {
+        if let Err(e) =
+            crate::track_b_component_types::rewrite_signatures_with_auto_composites(id, &schema, &mut exports)
+        {
+            cleanup_failed_load(id, &[], backend);
+            return Err(LoadError::Message(e));
+        }
+    }
+
     let mut oids = Vec::new();
     for (export_name, sig) in exports {
-        if let Err(e) = proc_reg::assert_sql_identifier(&export_name) {
-            cleanup_failed_load(id, &oids, backend);
-            return Err(e.into());
-        }
-        let sql_basename = format!("{prefix}_{export_name}");
+        let sql_suffix = match sql_identifier_suffix_for_export(&export_name) {
+            Ok(s) => s,
+            Err(e) => {
+                cleanup_failed_load(id, &oids, backend);
+                return Err(e);
+            }
+        };
+        let sql_basename = format!("{prefix}_{sql_suffix}");
         if let Err(e) = proc_reg::assert_sql_identifier(&sql_basename) {
             cleanup_failed_load(id, &oids, backend);
             return Err(e.into());
@@ -218,6 +248,26 @@ pub fn reconfigure_module(module_id: i64, options: Option<JsonB>) -> Result<(), 
     }
 
     Ok(())
+}
+
+/// Map a wasm export name (may contain `-`) to a suffix safe for unquoted PostgreSQL identifiers.
+fn sql_identifier_suffix_for_export(export_name: &str) -> Result<String, LoadError> {
+    if export_name.is_empty() {
+        return Err(LoadError::Message(
+            "pg_wasm_load: empty export name".into(),
+        ));
+    }
+    if !export_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(LoadError::Message(format!(
+            "pg_wasm_load: export name {export_name:?} contains characters not allowed for SQL mapping (use [A-Za-z0-9_-])"
+        )));
+    }
+    let suffix = export_name.replace('-', "_");
+    proc_reg::assert_sql_identifier(&suffix).map_err(LoadError::from)?;
+    Ok(suffix)
 }
 
 fn module_sql_prefix(module_name: Option<&str>, id: ModuleId) -> Result<String, LoadError> {
@@ -388,6 +438,8 @@ pub fn unload_module(id: i64) -> Result<(), LoadError> {
     for oid in oids {
         proc_reg::drop_wasm_trampoline_proc(oid);
     }
+    let track_b = registry::take_module_track_b_types(mid);
+    drop_track_b_types_for_module(&track_b);
     let _ = registry::take_module_abi(mid);
     registry::take_module_wasi_and_policy(mid);
     let _ = registry::take_module_catalog(mid);

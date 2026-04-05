@@ -21,4 +21,9 @@ fn main() {
     println!("cargo:rerun-if-changed={}", comp.display());
     let dst = out_dir.join("test_add.component.wasm");
     std::fs::copy(comp, &dst).unwrap_or_else(|e| panic!("copy {}: {e}", comp.display()));
+
+    let marshal = std::path::Path::new("fixtures/marshal_matrix.component.wasm");
+    println!("cargo:rerun-if-changed={}", marshal.display());
+    let dst_m = out_dir.join("marshal_matrix.component.wasm");
+    std::fs::copy(marshal, &dst_m).unwrap_or_else(|e| panic!("copy {}: {e}", marshal.display()));
 }

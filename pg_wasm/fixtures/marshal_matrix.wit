@@ -1,0 +1,12 @@
+package pg-wasm:marshal-matrix;
+
+/// Minimal marshal matrix for integration tests (extend as needed).
+world marshal-matrix {
+  record point {
+    x: s32,
+    y: s32,
+  }
+
+  export echo-point: func(p: point) -> point;
+  export echo-tuple: func(t: tuple<s32, s32>) -> tuple<s32, s32>;
+}

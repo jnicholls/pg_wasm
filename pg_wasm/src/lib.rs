@@ -1,7 +1,10 @@
 use pgrx::{JsonB, prelude::*};
 
 mod abi;
+mod composite_layout;
 mod config;
+#[cfg(feature = "runtime-wasmtime")]
+mod track_b_component_types;
 mod guc;
 mod load;
 mod mapping;
@@ -420,6 +423,206 @@ mod tests {
             .expect("non-null");
         assert_eq!(v, 7);
         Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload component");
+    }
+
+    /// `fixtures/marshal_matrix.wasm`: jsonb hints, `echo-point` / `echo-tuple` identity (arg + ret).
+    #[cfg(feature = "runtime-wasmtime")]
+    #[pg_test]
+    fn test_marshal_matrix_jsonb_roundtrip() {
+        let ext_nsp = extension_schema_name();
+        let hex = wasm_bytes_hex_lower(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/marshal_matrix.component.wasm"
+        )));
+        let opts = serde_json::json!({
+            "exports": {
+                "echo-point": { "args": ["jsonb"], "returns": "jsonb" },
+                "echo-tuple": { "args": ["jsonb"], "returns": "jsonb" }
+            }
+        })
+        .to_string();
+        let load_sql = format!(
+            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'mmjb'::text, '{}'::jsonb)",
+            opts.replace('\'', "''"),
+        );
+        let mid = Spi::get_one::<i64>(&load_sql)
+            .expect("load marshal_matrix")
+            .expect("mid");
+        let j = Spi::get_one::<JsonB>(&format!(
+            "SELECT {ext_nsp}.mmjb_echo_point('{{\"x\":3,\"y\":4}}'::jsonb)"
+        ))
+        .expect("echo-point")
+        .expect("json");
+        assert_eq!(j.0, serde_json::json!({"x": 3, "y": 4}));
+        let j2 = Spi::get_one::<JsonB>(&format!(
+            "SELECT {ext_nsp}.mmjb_echo_tuple('[10,20]'::jsonb)"
+        ))
+        .expect("echo-tuple")
+        .expect("json2");
+        assert_eq!(j2.0, serde_json::json!([10, 20]));
+        Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload mmjb");
+    }
+
+    /// Track A: user `CREATE TYPE` + `{"kind":"composite","type":...}` hints; same semantics as jsonb path.
+    #[cfg(feature = "runtime-wasmtime")]
+    #[pg_test]
+    fn test_marshal_matrix_track_a_composite() {
+        let ext_nsp = extension_schema_name();
+        let _ = Spi::run("DROP SCHEMA IF EXISTS mmtrac CASCADE");
+        Spi::run("CREATE SCHEMA mmtrac").expect("mmtrac schema");
+        Spi::run("CREATE TYPE mmtrac.point_t AS (x int, y int)").expect("point_t");
+        Spi::run("CREATE TYPE mmtrac.pair_t AS (f1 int, f2 int)").expect("pair_t");
+
+        let hex = wasm_bytes_hex_lower(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/marshal_matrix.component.wasm"
+        )));
+        let opts = serde_json::json!({
+            "exports": {
+                "echo-point": {
+                    "args": [{ "kind": "composite", "type": "mmtrac.point_t" }],
+                    "returns": { "kind": "composite", "type": "mmtrac.point_t" }
+                },
+                "echo-tuple": {
+                    "args": [{ "kind": "composite", "type": "mmtrac.pair_t" }],
+                    "returns": { "kind": "composite", "type": "mmtrac.pair_t" }
+                }
+            }
+        })
+        .to_string();
+        let load_sql = format!(
+            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'mmta'::text, '{}'::jsonb)",
+            opts.replace('\'', "''"),
+        );
+        let mid = Spi::get_one::<i64>(&load_sql)
+            .expect("load track a")
+            .expect("mid");
+        let x = Spi::get_one::<i32>(&format!(
+            "SELECT ({ext_nsp}.mmta_echo_point(ROW(11,22)::mmtrac.point_t)).x"
+        ))
+        .expect("x")
+        .expect("non-null");
+        assert_eq!(x, 11);
+        let y = Spi::get_one::<i32>(&format!(
+            "SELECT ({ext_nsp}.mmta_echo_point(ROW(11,22)::mmtrac.point_t)).y"
+        ))
+        .expect("y")
+        .expect("non-null");
+        assert_eq!(y, 22);
+        let f1 = Spi::get_one::<i32>(&format!(
+            "SELECT ({ext_nsp}.mmta_echo_tuple(ROW(7,8)::mmtrac.pair_t)).f1"
+        ))
+        .expect("f1")
+        .expect("nn");
+        assert_eq!(f1, 7);
+        Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload mmta");
+        let _ = Spi::run("DROP SCHEMA IF EXISTS mmtrac CASCADE");
+    }
+
+    /// Track A negative: composite attribute layout does not match WIT record.
+    #[cfg(feature = "runtime-wasmtime")]
+    #[pg_test]
+    fn test_marshal_matrix_track_a_composite_rejected_on_mismatch() {
+        let ext_nsp = extension_schema_name();
+        let _ = Spi::run("DROP SCHEMA IF EXISTS mmneg CASCADE");
+        Spi::run("CREATE SCHEMA mmneg").expect("mmneg");
+        Spi::run("CREATE TYPE mmneg.bad_point AS (only_col int)").expect("bad_point");
+
+        let hex = wasm_bytes_hex_lower(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/marshal_matrix.component.wasm"
+        )));
+        let opts = serde_json::json!({
+            "exports": {
+                "echo-point": {
+                    "args": [{ "kind": "composite", "type": "mmneg.bad_point" }],
+                    "returns": { "kind": "composite", "type": "mmneg.bad_point" }
+                }
+            }
+        })
+        .to_string();
+        let load_sql = format!(
+            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'mmng'::text, '{}'::jsonb)",
+            opts.replace('\'', "''"),
+        );
+        let msg = PgTryBuilder::new(|| match Spi::get_one::<i64>(&load_sql) {
+            Err(e) => format!("{e}"),
+            Ok(Some(_)) => "__unexpected_ok__".to_string(),
+            Ok(None) => "__unexpected_null__".to_string(),
+        })
+        .catch_when(PgSqlErrorCode::ERRCODE_INTERNAL_ERROR, caught_error_message)
+        .execute();
+        assert!(
+            msg != "__unexpected_ok__" && msg != "__unexpected_null__",
+            "expected load failure, got {msg:?}"
+        );
+        assert!(
+            msg.contains("composite") || msg.contains("attribute") || msg.contains("field"),
+            "unexpected error: {msg}"
+        );
+        let _ = Spi::run("DROP SCHEMA IF EXISTS mmneg CASCADE");
+    }
+
+    /// Track B: `pg_wasm.auto_create_component_types` creates extension-schema composites; unload drops them.
+    #[cfg(feature = "runtime-wasmtime")]
+    #[pg_test]
+    fn test_marshal_matrix_track_b_auto_composite_lifecycle() {
+        let ext_nsp = extension_schema_name();
+        Spi::run("SET pg_wasm.auto_create_component_types = on").expect("guc on");
+
+        let hex = wasm_bytes_hex_lower(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/marshal_matrix.component.wasm"
+        )));
+        let load_sql = format!(
+            "SELECT {ext_nsp}.pg_wasm_load(decode('{hex}','hex')::bytea, 'mmtb'::text)",
+        );
+        let mid = Spi::get_one::<i64>(&load_sql)
+            .expect("load track b")
+            .expect("mid");
+
+        let cnt_before: i64 = Spi::get_one(&format!(
+            "SELECT count(*)::bigint FROM pg_catalog.pg_type t \
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
+             WHERE n.nspname = '{ext_nsp}' AND t.typtype = 'c' AND t.typname LIKE 'wct_m{mid}_%'"
+        ))
+        .expect("count types")
+        .expect("cnt");
+        assert!(cnt_before >= 1, "expected auto-generated composite types, got {cnt_before}");
+
+        let fq: String = Spi::get_one(&format!(
+            "SELECT (quote_ident(n.nspname) || '.' || quote_ident(t.typname))::text \
+             FROM pg_catalog.pg_type t \
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
+             JOIN pg_catalog.pg_attribute ax ON ax.attrelid = t.typrelid AND ax.attname = 'x' \
+                 AND ax.attnum > 0 AND NOT ax.attisdropped \
+             JOIN pg_catalog.pg_attribute ay ON ay.attrelid = t.typrelid AND ay.attname = 'y' \
+                 AND ay.attnum > 0 AND NOT ay.attisdropped \
+             WHERE n.nspname = '{ext_nsp}' AND t.typname LIKE 'wct_m{mid}_%' \
+             ORDER BY t.oid DESC LIMIT 1"
+        ))
+        .expect("fq type")
+        .expect("row");
+
+        let x = Spi::get_one::<i32>(&format!(
+            "SELECT ({ext_nsp}.mmtb_echo_point(ROW(30,40)::{fq})).x"
+        ))
+        .expect("call tb")
+        .expect("x");
+        assert_eq!(x, 30);
+
+        Spi::run(&format!("SELECT {ext_nsp}.pg_wasm_unload({mid})")).expect("unload mmtb");
+
+        let cnt_after: i64 = Spi::get_one(&format!(
+            "SELECT count(*)::bigint FROM pg_catalog.pg_type t \
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
+             WHERE n.nspname = '{ext_nsp}' AND t.typtype = 'c' AND t.typname LIKE 'wct_m{mid}_%'"
+        ))
+        .expect("count after")
+        .expect("cnt2");
+        assert_eq!(cnt_after, 0, "Track B types should be dropped on unload");
+
+        Spi::run("SET pg_wasm.auto_create_component_types = off").expect("guc off");
     }
 
     #[pg_test]

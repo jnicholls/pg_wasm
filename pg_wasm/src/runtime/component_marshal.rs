@@ -3,9 +3,12 @@
 //! Primitive component values use dedicated SQL types; complex shapes round-trip through
 //! [`serde_json::Value`] and [`wasmtime::component::Val`].
 
+use pgrx::pg_sys;
+
 use wasmtime::component::Val;
 
-use crate::mapping::MarshalType;
+use crate::composite_layout;
+use crate::mapping::{MarshalType, PgWasmReturnDesc, PgWasmTypeKind};
 
 /// Rust-side argument payload extracted from PostgreSQL before lowering to [`Val`].
 #[derive(Clone, Debug)]
@@ -20,6 +23,8 @@ pub enum PreparedComponentArg {
     Int32Array(Vec<i32>),
     StringArray(Vec<String>),
     Json(serde_json::Value),
+    /// Pre-lifted composite argument (`record` / `tuple` SQL composite types).
+    WasmVal(Val),
 }
 
 /// Return payload after lifting a component result, before building a [`pg_sys::Datum`].
@@ -35,6 +40,7 @@ pub enum DynReturnPayload {
     Int32Array(Vec<i32>),
     StringArray(Vec<String>),
     Json(serde_json::Value),
+    Datum(pg_sys::Datum),
 }
 
 pub fn args_to_vals(
@@ -121,6 +127,11 @@ fn prepared_arg_to_val(arg: &PreparedComponentArg, m: &MarshalType) -> Result<Va
         (PreparedComponentArg::Json(j), _) if json_interchange_marshal(m) => {
             json_to_val(j, m)
         }
+        (PreparedComponentArg::WasmVal(v), _)
+            if composite_layout::marshal_type_uses_composite_surface(m) =>
+        {
+            Ok(v.clone())
+        }
         _ => Err(format!(
             "pg_wasm: SQL argument does not match WIT marshal type ({m:?})"
         )),
@@ -140,7 +151,16 @@ fn json_interchange_marshal(m: &MarshalType) -> bool {
     )
 }
 
-pub fn val_to_return_payload(v: Val, m: &MarshalType) -> Result<DynReturnPayload, String> {
+pub fn val_to_return_payload(
+    v: Val,
+    m: &MarshalType,
+    ret: &PgWasmReturnDesc,
+) -> Result<DynReturnPayload, String> {
+    if ret.kind == PgWasmTypeKind::Composite && composite_layout::marshal_type_uses_composite_surface(m)
+    {
+        let d = crate::runtime::composite_marshal::val_to_composite_datum(&v, ret.pg_oid, m)?;
+        return Ok(DynReturnPayload::Datum(d));
+    }
     if json_interchange_marshal(m) {
         return Ok(DynReturnPayload::Json(val_to_json(&v, m)?));
     }
@@ -520,7 +540,18 @@ fn val_to_json(v: &Val, m: &MarshalType) -> Result<serde_json::Value, String> {
                 .collect();
             serde_json::Value::Array(arr)
         }
+        (_, MarshalType::List(inner)) => {
+            let Val::List(items) = v else {
+                return Err("pg_wasm: Val/List marshal mismatch".into());
+            };
+            let arr: Result<Vec<_>, _> = items.iter().map(|x| val_to_json(x, inner)).collect();
+            serde_json::Value::Array(arr?)
+        }
         (Val::Bool(b), MarshalType::Bool) => serde_json::Value::Bool(*b),
+        (Val::S8(x), MarshalType::S8) => serde_json::Value::from(i64::from(*x)),
+        (Val::U8(x), MarshalType::U8) => serde_json::Value::from(*x),
+        (Val::S16(x), MarshalType::S16) => serde_json::Value::from(i64::from(*x)),
+        (Val::U16(x), MarshalType::U16) => serde_json::Value::from(*x),
         (Val::S32(x), MarshalType::S32) => serde_json::Value::from(*x),
         (Val::U32(x), MarshalType::U32) => serde_json::Value::from(*x),
         (Val::S64(x), MarshalType::S64) => serde_json::Value::from(*x),
@@ -543,7 +574,58 @@ fn val_to_json(v: &Val, m: &MarshalType) -> Result<serde_json::Value, String> {
 
 #[cfg(test)]
 mod tests {
+    //! JSON `jsonb` path round-trips for [`MarshalType`] (PostgreSQL ↔ component dynamic calls).
+    //!
+    //! **Coverage checklist (arg and ret use the same encoding):**
+    //!
+    //! | Variant | Covered here |
+    //! |---------|----------------|
+    //! | Bool, S8–U64, F32, F64, Char, String | `json_all_scalar_variants_roundtrip` |
+    //! | List(U8), List(S32), List(U32), List(String) | `json_list_variants_roundtrip` |
+    //! | Record, Tuple | `json_record_roundtrip`, `json_empty_record_and_tuple`, `json_tuple_roundtrip` |
+    //! | Variant, Option, Result, Enum, Flags | `json_variant_roundtrip`, `json_option_result_enum_flags_roundtrip` |
+    //!
+    //! Composite SQL encoding (Track A/B) is tested in `pg_test` and `composite_marshal` integration tests.
+
     use super::*;
+
+    fn assert_json_roundtrip(m: &MarshalType, j: serde_json::Value) {
+        let val = super::json_to_val(&j, m).expect("json_to_val");
+        let back = super::val_to_json(&val, m).expect("val_to_json");
+        assert_eq!(j, back, "marshal type {m:?}");
+    }
+
+    #[test]
+    fn json_all_scalar_variants_roundtrip() {
+        assert_json_roundtrip(&MarshalType::Bool, serde_json::json!(true));
+        assert_json_roundtrip(&MarshalType::S8, serde_json::json!(-42));
+        assert_json_roundtrip(&MarshalType::U8, serde_json::json!(200));
+        assert_json_roundtrip(&MarshalType::S16, serde_json::json!(-1000));
+        assert_json_roundtrip(&MarshalType::U16, serde_json::json!(50000));
+        assert_json_roundtrip(&MarshalType::S32, serde_json::json!(-1_000_000));
+        assert_json_roundtrip(&MarshalType::U32, serde_json::json!(3_000_000_000u64));
+        assert_json_roundtrip(&MarshalType::S64, serde_json::json!(-9_223_372_036_854_775_808i64));
+        assert_json_roundtrip(&MarshalType::U64, serde_json::json!(18_446_744_073_709_551_615u64));
+        assert_json_roundtrip(&MarshalType::F32, serde_json::json!(1.5));
+        assert_json_roundtrip(&MarshalType::F64, serde_json::json!(2.25));
+        assert_json_roundtrip(&MarshalType::Char, serde_json::json!("π"));
+        assert_json_roundtrip(&MarshalType::String, serde_json::json!("hello"));
+    }
+
+    #[test]
+    fn json_list_variants_roundtrip() {
+        let u8l = MarshalType::List(Box::new(MarshalType::U8));
+        assert_json_roundtrip(&u8l, serde_json::json!([1, 2, 3]));
+
+        let s32l = MarshalType::List(Box::new(MarshalType::S32));
+        assert_json_roundtrip(&s32l, serde_json::json!([-1, 0, 2]));
+
+        let u32l = MarshalType::List(Box::new(MarshalType::U32));
+        assert_json_roundtrip(&u32l, serde_json::json!([0u64, 1u64]));
+
+        let sl = MarshalType::List(Box::new(MarshalType::String));
+        assert_json_roundtrip(&sl, serde_json::json!(["a", "b"]));
+    }
 
     #[test]
     fn json_record_roundtrip() {
@@ -551,10 +633,28 @@ mod tests {
             ("x".into(), MarshalType::S32),
             ("y".into(), MarshalType::String),
         ]);
-        let v = serde_json::json!({"x": 1, "y": "hi"});
-        let val = super::json_to_val(&v, &m).expect("to val");
-        let back = super::val_to_json(&val, &m).expect("to json");
-        assert_eq!(v, back);
+        assert_json_roundtrip(&m, serde_json::json!({"x": 1, "y": "hi"}));
+    }
+
+    #[test]
+    fn json_empty_record_and_tuple() {
+        let rec = MarshalType::Record(vec![]);
+        assert_json_roundtrip(&rec, serde_json::json!({}));
+        let tup = MarshalType::Tuple(vec![]);
+        assert_json_roundtrip(&tup, serde_json::json!([]));
+    }
+
+    #[test]
+    fn json_tuple_roundtrip() {
+        let m = MarshalType::Tuple(vec![MarshalType::S32, MarshalType::Bool]);
+        assert_json_roundtrip(&m, serde_json::json!([7, true]));
+    }
+
+    #[test]
+    fn json_nested_record_in_record() {
+        let inner = MarshalType::Record(vec![("n".into(), MarshalType::S32)]);
+        let m = MarshalType::Record(vec![("r".into(), inner)]);
+        assert_json_roundtrip(&m, serde_json::json!({"r": {"n": 99}}));
     }
 
     #[test]
@@ -563,9 +663,34 @@ mod tests {
             ("a".into(), None),
             ("b".into(), Some(MarshalType::S32)),
         ]);
-        let v = serde_json::json!({"tag": "b", "val": 7});
-        let val = super::json_to_val(&v, &m).expect("to val");
-        let back = super::val_to_json(&val, &m).expect("to json");
-        assert_eq!(v, back);
+        assert_json_roundtrip(&m, serde_json::json!({"tag": "a"}));
+        assert_json_roundtrip(&m, serde_json::json!({"tag": "b", "val": 7}));
+    }
+
+    #[test]
+    fn json_option_result_enum_flags_roundtrip() {
+        let opt = MarshalType::Option(Box::new(MarshalType::S32));
+        assert_json_roundtrip(&opt, serde_json::Value::Null);
+        assert_json_roundtrip(&opt, serde_json::json!(42));
+
+        let res_unit = MarshalType::Result {
+            ok: None,
+            err: None,
+        };
+        assert_json_roundtrip(&res_unit, serde_json::json!({"ok": null}));
+        assert_json_roundtrip(&res_unit, serde_json::json!({"err": null}));
+
+        let res_payload = MarshalType::Result {
+            ok: Some(Box::new(MarshalType::S32)),
+            err: Some(Box::new(MarshalType::String)),
+        };
+        assert_json_roundtrip(&res_payload, serde_json::json!({"ok": -3}));
+        assert_json_roundtrip(&res_payload, serde_json::json!({"err": "oops"}));
+
+        let en = MarshalType::Enum(vec!["red".into(), "green".into()]);
+        assert_json_roundtrip(&en, serde_json::json!("green"));
+
+        let fl = MarshalType::Flags(vec!["r".into(), "w".into(), "x".into()]);
+        assert_json_roundtrip(&fl, serde_json::json!(["r", "x"]));
     }
 }

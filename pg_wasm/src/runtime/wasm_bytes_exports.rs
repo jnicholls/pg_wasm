@@ -38,6 +38,11 @@ fn wasm_types_for_hint(hint: &ExportTypeHint) -> Result<(Vec<ValType>, Vec<ValTy
                         .into(),
                 );
             }
+            PgWasmTypeKind::Composite => {
+                return Err(
+                    "pg_wasm: composite type hints apply to WebAssembly components only".into(),
+                );
+            }
         }
     }
     let results = vec![match hint.ret.1 {
@@ -50,6 +55,9 @@ fn wasm_types_for_hint(hint: &ExportTypeHint) -> Result<(Vec<ValType>, Vec<ValTy
             return Err(
                 "pg_wasm: int4[] / text[] export hints apply to WebAssembly components only".into(),
             );
+        }
+        PgWasmTypeKind::Composite => {
+            return Err("pg_wasm: composite type hints apply to WebAssembly components only".into());
         }
     }];
     Ok((params, results))

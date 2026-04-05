@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use pgrx::pg_sys::Oid;
 use pgrx::prelude::*;
+use pgrx::spi::Spi;
 use serde_json::Value;
 
 /// Maps export name → SQL types and optional WIT note (for future component support).
@@ -35,6 +36,8 @@ pub enum PgWasmTypeKind {
     Int4Array,
     /// PostgreSQL `text[]` for component `list<string>`.
     TextArray,
+    /// PostgreSQL composite type (Track A user types or Track B auto-generated).
+    Composite,
 }
 
 /// Describes one SQL argument position for dynamic dispatch.
@@ -169,18 +172,76 @@ pub fn parse_export_hints(val: &Value) -> Result<ExportHintMap, String> {
 }
 
 fn parse_one_sql_type(v: &Value) -> Result<(Oid, PgWasmTypeKind), String> {
+    if let Some(obj) = v.as_object() {
+        let kind = obj
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .ok_or_else(|| "type object requires string \"kind\"".to_string())?;
+        return match kind {
+            "jsonb" => Ok((pg_sys::JSONBOID, PgWasmTypeKind::Bytes)),
+            "composite" => {
+                let t = obj
+                    .get("type")
+                    .and_then(|x| x.as_str())
+                    .ok_or_else(|| "composite type object requires string \"type\" (regtype)".to_string())?;
+                let oid = resolve_regtype_oid(t)?;
+                if !pg_type_oid_is_composite(oid)? {
+                    return Err(format!("pg_wasm: {t:?} is not a composite type"));
+                }
+                Ok((oid, PgWasmTypeKind::Composite))
+            }
+            other => Err(format!(
+                "unknown type.kind {other:?} (use \"jsonb\" or \"composite\")"
+            )),
+        };
+    }
     if let Some(n) = v.as_u64() {
         let oid = Oid::from(n as u32);
         if oid == pg_sys::InvalidOid {
             return Err("InvalidOid not allowed".into());
         }
-        // Custom OIDs: treat as opaque byte payload (SQL should use types binary-compatible with bytea / cast).
+        if pg_type_oid_is_composite(oid)? {
+            return Ok((oid, PgWasmTypeKind::Composite));
+        }
+        // Custom non-composite OIDs: opaque byte payload (legacy).
         return Ok((oid, PgWasmTypeKind::Bytes));
     }
     if let Some(s) = v.as_str() {
-        return sql_name_to_pg_descriptor(s);
+        if let Ok(desc) = sql_name_to_pg_descriptor(s) {
+            return Ok(desc);
+        }
+        let oid = resolve_regtype_oid(s)?;
+        if pg_type_oid_is_composite(oid)? {
+            return Ok((oid, PgWasmTypeKind::Composite));
+        }
+        return Err(format!(
+            "pg_wasm: type name {s:?} is not a built-in alias and not a composite type (use schema.type for composites)"
+        ));
     }
-    Err("expected string type name or numeric type OID".into())
+    Err("expected string type name, numeric OID, or type object {kind,...}".into())
+}
+
+/// `SELECT oid FROM pg_type WHERE oid = 'typename'::regtype::oid` (qualified names supported).
+pub fn resolve_regtype_oid(qualified: &str) -> Result<Oid, String> {
+    let esc = qualified.replace('\'', "''");
+    let sql = format!("SELECT ('{esc}'::regtype)::oid");
+    Spi::get_one::<Oid>(&sql)
+        .map_err(|e| format!("pg_wasm: regtype {qualified:?}: {e}"))?
+        .ok_or_else(|| format!("pg_wasm: unknown type name {qualified:?}"))
+}
+
+/// True if `oid` is a PostgreSQL composite (`pg_type.typtype = 'c'`).
+pub fn pg_type_oid_is_composite(oid: Oid) -> Result<bool, String> {
+    if oid == pg_sys::InvalidOid {
+        return Ok(false);
+    }
+    let sql = format!(
+        "SELECT typtype::text = 'c' FROM pg_catalog.pg_type WHERE oid = {}",
+        u32::from(oid)
+    );
+    Spi::get_one::<bool>(&sql)
+        .map_err(|e| format!("pg_wasm: pg_type lookup: {e}"))?
+        .ok_or_else(|| format!("pg_wasm: pg_type oid {} not found", u32::from(oid)))
 }
 
 /// Builtin SQL type names → PostgreSQL OID + marshal kind.
@@ -356,18 +417,77 @@ pub fn export_hint_matches_marshal_plan(
         ));
     }
     for (i, ((ho, hk), d)) in hint.args.iter().zip(&args).enumerate() {
-        if *ho != d.pg_oid || *hk != d.kind {
-            return Err(format!(
-                "pg_wasm: export hint arg[{i}] (oid={ho}, kind={hk:?}) does not match WIT mapping (oid={}, kind={:?})",
-                d.pg_oid, d.kind
-            ));
+        let mt = &plan.params[i];
+        if slot_hint_matches_wit_descriptor(*ho, *hk, d, mt)? {
+            continue;
         }
+        return Err(format!(
+            "pg_wasm: export hint arg[{i}] (oid={ho}, kind={hk:?}) does not match WIT mapping (oid={}, kind={:?})",
+            d.pg_oid, d.kind
+        ));
     }
-    if hint.ret.0 != ret.pg_oid || hint.ret.1 != ret.kind {
+    let ret_mt = &plan.result;
+    let ret_default = PgWasmArgDesc {
+        pg_oid: ret.pg_oid,
+        kind: ret.kind,
+    };
+    if !slot_hint_matches_wit_descriptor(hint.ret.0, hint.ret.1, &ret_default, ret_mt)? {
         return Err(format!(
             "pg_wasm: export hint return (oid={}, kind={:?}) does not match WIT mapping (oid={}, kind={:?})",
             hint.ret.0, hint.ret.1, ret.pg_oid, ret.kind
         ));
     }
     Ok(())
+}
+
+fn slot_hint_matches_wit_descriptor(
+    ho: Oid,
+    hk: PgWasmTypeKind,
+    default: &PgWasmArgDesc,
+    mt: &MarshalType,
+) -> Result<bool, String> {
+    if ho == default.pg_oid && hk == default.kind {
+        return Ok(true);
+    }
+    if hk == PgWasmTypeKind::Composite && pg_type_oid_is_composite(ho)? {
+        if crate::composite_layout::marshal_type_uses_composite_surface(mt) {
+            crate::composite_layout::validate_composite_typoid_matches_marshal(ho, mt)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Expected PostgreSQL `typid` for a leaf marshal slot (no `record` / `tuple` aggregates).
+pub(crate) fn marshal_leaf_expected_pg_typoid(mt: &MarshalType) -> Option<Oid> {
+    match mt {
+        MarshalType::Record(_) | MarshalType::Tuple(_) => None,
+        _ => marshal_type_to_arg_desc(mt).map(|a| a.pg_oid),
+    }
+}
+
+/// Build [`ExportSignature`] from a validated component hint and WIT marshal plan.
+pub fn export_signature_from_component_hint(
+    plan: ComponentDynCallPlan,
+    hint: &ExportTypeHint,
+) -> Option<ExportSignature> {
+    let args = hint
+        .args
+        .iter()
+        .map(|(oid, k)| PgWasmArgDesc {
+            pg_oid: *oid,
+            kind: *k,
+        })
+        .collect();
+    let ret = PgWasmReturnDesc {
+        pg_oid: hint.ret.0,
+        kind: hint.ret.1,
+    };
+    let dynamic = component_plan_needs_dynamic_call(&plan).then(|| plan);
+    Some(ExportSignature {
+        args,
+        ret,
+        wit_interface: hint.wit_interface.clone(),
+        component_dynamic_plan: dynamic,
+    })
 }

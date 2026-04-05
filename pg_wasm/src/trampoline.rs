@@ -4,6 +4,8 @@
 //! `#[pg_extern]`), with a matching `pg_finfo_*` entry for the v1 call convention.
 
 use pgrx::{JsonB, fcinfo::pg_getarg, pg_sys, prelude::*};
+#[cfg(feature = "runtime-wasmtime")]
+use pgrx::fcinfo::pg_getarg_datum;
 
 use crate::mapping::{ExportSignature, PgWasmReturnDesc, PgWasmTypeKind};
 
@@ -95,6 +97,8 @@ enum WasmValue {
     Int32Array(Vec<i32>),
     /// `text[]` component return.
     StringArray(Vec<String>),
+    /// Ready-to-return composite datum (Track A / B `record` / `tuple`).
+    Datum(pg_sys::Datum),
 }
 
 fn prepare_wasm_trampoline(fcinfo: pg_sys::FunctionCallInfo) -> PreparedWasmCall {
@@ -182,7 +186,7 @@ fn run_wasm_isolated(p: &PreparedWasmCall) -> Result<WasmValue, String> {
                 "pg_wasm: component function returned no values".to_string()
             })?;
             dyn_payload_to_wasm_value(
-                val_to_return_payload(ret_val, &plan.result)?,
+                val_to_return_payload(ret_val, &plan.result, &p.reg.signature.ret)?,
                 &p.reg.signature.ret,
             )
         }
@@ -372,6 +376,12 @@ fn prepare_scalar_invocation(
 fn wasm_value_into_datum(reg: &RegisteredFunction, v: WasmValue) -> pg_sys::Datum {
     let sig = &reg.signature;
     match v {
+        WasmValue::Datum(d) => {
+            if sig.ret.kind != PgWasmTypeKind::Composite {
+                error!("pg_wasm: internal error: composite datum for non-composite return");
+            }
+            d
+        }
         WasmValue::Int32Array(v) => {
             if sig.ret.kind != PgWasmTypeKind::Int4Array {
                 error!("pg_wasm: internal error: int4[] wasm value for unexpected PG return");
@@ -445,7 +455,7 @@ fn prepare_component_dynamic_args(
         error!("pg_wasm: internal error: signature args vs marshal plan length mismatch");
     }
     (0..sig.args.len())
-        .map(|i| read_one_component_dynamic_arg(&sig.args[i], fcinfo, i))
+        .map(|i| read_one_component_dynamic_arg(&sig.args[i], fcinfo, i, &plan.params[i]))
         .collect()
 }
 
@@ -454,6 +464,7 @@ fn read_one_component_dynamic_arg(
     desc: &crate::mapping::PgWasmArgDesc,
     fcinfo: pg_sys::FunctionCallInfo,
     i: usize,
+    marshal: &crate::mapping::MarshalType,
 ) -> PreparedComponentArg {
     match desc.kind {
         PgWasmTypeKind::Bool => PreparedComponentArg::Bool(
@@ -489,6 +500,12 @@ fn read_one_component_dynamic_arg(
             unsafe { pg_getarg::<Vec<String>>(fcinfo, i) }
                 .expect("pg_wasm: NULL or invalid text[] argument"),
         ),
+        PgWasmTypeKind::Composite => {
+            let d = unsafe { pg_getarg_datum(fcinfo, i) }.expect("pg_wasm: NULL composite argument");
+            let v = unsafe { crate::runtime::composite_marshal::composite_datum_to_val(d, marshal) }
+                .unwrap_or_else(|e| error!("{e}"));
+            PreparedComponentArg::WasmVal(v)
+        }
     }
 }
 
@@ -512,6 +529,7 @@ fn dyn_payload_to_wasm_value(
                 serde_json::to_vec(&j).map_err(|e| format!("pg_wasm: json encode: {e}"))?,
             )
         }
+        (DynReturnPayload::Datum(d), PgWasmTypeKind::Composite) => WasmValue::Datum(d),
         _ => {
             return Err(format!(
                 "pg_wasm: component return does not match SQL return descriptor ({:?})",

@@ -106,12 +106,36 @@ static MODULE_HOOKS: OnceLock<Mutex<HashMap<ModuleId, ModuleHooks>>> = OnceLock:
 static MODULE_EXECUTION_BACKEND: OnceLock<Mutex<HashMap<ModuleId, ModuleExecutionBackend>>> =
     OnceLock::new();
 
+/// Track B: auto-generated composite type names per module `(schema, typname)` for `DROP TYPE` on unload.
+static MODULE_TRACK_B_TYPES: OnceLock<Mutex<HashMap<ModuleId, Vec<(String, String)>>>> =
+    OnceLock::new();
+
 fn module_hooks_map() -> &'static Mutex<HashMap<ModuleId, ModuleHooks>> {
     MODULE_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn module_execution_backend_map() -> &'static Mutex<HashMap<ModuleId, ModuleExecutionBackend>> {
     MODULE_EXECUTION_BACKEND.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn module_track_b_types_map() -> &'static Mutex<HashMap<ModuleId, Vec<(String, String)>>> {
+    MODULE_TRACK_B_TYPES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn record_module_track_b_types(module: ModuleId, types: Vec<(String, String)>) {
+    let mut g = module_track_b_types_map()
+        .lock()
+        .expect("module track-b types map poisoned");
+    g.insert(module, types);
+}
+
+/// Remove and return Track B generated type names (for `DROP TYPE`); empty if none.
+#[must_use]
+pub fn take_module_track_b_types(module: ModuleId) -> Vec<(String, String)> {
+    let mut g = module_track_b_types_map()
+        .lock()
+        .expect("module track-b types map poisoned");
+    g.remove(&module).unwrap_or_default()
 }
 
 pub fn record_module_execution_backend(module: ModuleId, backend: ModuleExecutionBackend) {

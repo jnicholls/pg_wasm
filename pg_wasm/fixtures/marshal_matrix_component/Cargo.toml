@@ -1,0 +1,18 @@
+[package]
+name = "marshal_matrix"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.55.0", features = ["macros"] }
+wit-bindgen-rt = "0.44.0"
+
+[package.metadata.component]
+package = "pg-wasm:marshal-matrix"
+
+# Stand-alone crate (not a member of the repo workspace).
+[workspace]

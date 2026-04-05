@@ -25,7 +25,8 @@ use crate::{
     mapping::{
         ComponentDynCallPlan, ExportHintMap, ExportSignature, ExportTypeHint, MarshalType,
         PgWasmArgDesc, PgWasmReturnDesc, PgWasmTypeKind, component_plan_needs_dynamic_call,
-        export_hint_matches_marshal_plan, pg_descriptors_from_marshal_plan, signature_from_hint,
+        export_hint_matches_marshal_plan, export_signature_from_component_hint,
+        pg_descriptors_from_marshal_plan, signature_from_hint,
     },
     registry::{self, ModuleId},
 };
@@ -600,6 +601,11 @@ fn wasm_types_for_hint(hint: &ExportTypeHint) -> Result<(Vec<ValType>, Vec<ValTy
                         .into(),
                 );
             }
+            PgWasmTypeKind::Composite => {
+                return Err(
+                    "pg_wasm: composite type hints apply to WebAssembly components only".into(),
+                );
+            }
         }
     }
     let results = vec![match hint.ret.1 {
@@ -612,6 +618,9 @@ fn wasm_types_for_hint(hint: &ExportTypeHint) -> Result<(Vec<ValType>, Vec<ValTy
             return Err(
                 "pg_wasm: int4[] / text[] export hints apply to WebAssembly components only".into(),
             );
+        }
+        PgWasmTypeKind::Composite => {
+            return Err("pg_wasm: composite type hints apply to WebAssembly components only".into());
         }
     }];
     Ok((params, results))
@@ -1387,8 +1396,7 @@ impl WasmtimeBackend {
             if let Some(hint) = export_hints.get(name) {
                 let plan = component_func_to_marshal_plan(&f)?;
                 export_hint_matches_marshal_plan(hint, &plan)?;
-                let Some(sig) = export_signature_from_component_plan(plan, hint.wit_interface.clone())
-                else {
+                let Some(sig) = export_signature_from_component_hint(plan, hint) else {
                     return Err(format!(
                         "pg_wasm: export {name:?}: could not map WIT types to PostgreSQL"
                     ));
@@ -1503,6 +1511,10 @@ fn map_export_sig_auto(params: &[ValType], results: &[ValType]) -> Option<Export
 
 #[cfg(test)]
 mod component_export_tests {
+    //! Dynamic `Func::call` checks (no Postgres). See `fixtures/marshal_matrix.component.wasm` for
+    //! `echo-point` / `echo-tuple`; `test_add` covers primitive `add`. Full per-`MarshalType` matrix
+    //! lives in `component_marshal::tests` (JSON) and `pg_test` (SQL + wasm).
+
     use wasmtime::component::Val;
 
     use crate::abi::WasmAbiKind;
@@ -1550,6 +1562,57 @@ mod component_export_tests {
         let out = call_component_export_dynamic(mid, "add", &params).expect("dynamic call");
         assert_eq!(out.len(), 1);
         assert!(matches!(out[0], Val::S32(42)));
+
+        let _ = crate::registry::take_module_resource_limits(mid);
+        crate::registry::take_module_wasi_and_policy(mid);
+        let _ = crate::registry::take_module_abi(mid);
+        remove_compiled_module(mid);
+    }
+
+    #[test]
+    fn marshal_matrix_fixture_dynamic_echo_point() {
+        let wasm = include_bytes!(concat!(env!("OUT_DIR"), "/marshal_matrix.component.wasm"));
+        let mid = ModuleId(910_003);
+        compile_store_and_list_exports(
+            mid,
+            wasm,
+            &ExportHintMap::new(),
+            WasmAbiKind::ComponentModel,
+        )
+        .expect("compile marshal_matrix");
+        crate::registry::record_module_needs_wasi(mid, false);
+        crate::registry::record_module_policy_overrides(mid, PolicyOverrides::default());
+        crate::registry::record_module_resource_limits(mid, ModuleResourceLimits::default());
+        crate::registry::record_module_abi(mid, WasmAbiKind::ComponentModel);
+
+        let params = [Val::Record(vec![
+            ("x".into(), Val::S32(5)),
+            ("y".into(), Val::S32(6)),
+        ])];
+        let out =
+            call_component_export_dynamic(mid, "echo-point", &params).expect("echo-point");
+        assert_eq!(out.len(), 1);
+        let Val::Record(fields) = &out[0] else {
+            panic!("expected record, got {:?}", out[0]);
+        };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "x");
+        assert_eq!(fields[1].0, "y");
+        assert!(matches!(fields[0].1, Val::S32(5)));
+        assert!(matches!(fields[1].1, Val::S32(6)));
+
+        let tout = call_component_export_dynamic(mid, "echo-tuple", &[Val::Tuple(vec![
+            Val::S32(7),
+            Val::S32(8),
+        ])])
+        .expect("echo-tuple");
+        assert_eq!(tout.len(), 1);
+        let Val::Tuple(items) = &tout[0] else {
+            panic!("expected tuple, got {:?}", tout[0]);
+        };
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0], Val::S32(7)));
+        assert!(matches!(items[1], Val::S32(8)));
 
         let _ = crate::registry::take_module_resource_limits(mid);
         crate::registry::take_module_wasi_and_policy(mid);

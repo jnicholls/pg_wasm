@@ -45,6 +45,10 @@ pub static PG_WASM_MAX_MEMORY_PAGES: GucSetting<i32> = GucSetting::<i32>::new(40
 /// Fuel units per wasm invocation when fuel is enabled (`pg_wasm.fuel_per_invocation`). `0` = unlimited.
 pub static PG_WASM_FUEL_PER_INVOCATION: GucSetting<i32> = GucSetting::<i32>::new(500_000_000);
 
+/// When on, component `record` / `tuple` exports defaulting to `jsonb` get auto-generated SQL composite types (Track B).
+#[cfg(feature = "runtime-wasmtime")]
+pub static PG_WASM_AUTO_CREATE_COMPONENT_TYPES: GucSetting<bool> = GucSetting::<bool>::new(false);
+
 pub fn init() {
     GucRegistry::define_string_guc(
         c"pg_wasm.module_path",
@@ -148,6 +152,15 @@ pub fn init() {
         GucContext::Suset,
         GucFlags::default(),
     );
+    #[cfg(feature = "runtime-wasmtime")]
+    GucRegistry::define_bool_guc(
+        c"pg_wasm.auto_create_component_types",
+        c"When on, WebAssembly component record/tuple exports use auto-generated composite types in the extension schema (Track B).",
+        c"Default off. Superuser-settable. Types are dropped on pg_wasm_unload.",
+        &PG_WASM_AUTO_CREATE_COMPONENT_TYPES,
+        GucContext::Suset,
+        GucFlags::default(),
+    );
 }
 
 pub fn collect_metrics() -> bool {
@@ -212,6 +225,11 @@ pub fn effective_max_memory_pages(module: ModuleId) -> u32 {
 }
 
 /// Fuel for one guest entry: GUC (0 = unlimited) narrowed by per-module override.
+#[cfg(feature = "runtime-wasmtime")]
+pub fn auto_create_component_types() -> bool {
+    PG_WASM_AUTO_CREATE_COMPONENT_TYPES.get()
+}
+
 pub fn effective_fuel_per_invocation(module: ModuleId) -> u64 {
     let g_raw = PG_WASM_FUEL_PER_INVOCATION.get().max(0) as u64;
     let global = if g_raw == 0 { u64::MAX } else { g_raw };

@@ -12,6 +12,8 @@ pub mod wasm_bytes_exports;
 #[cfg(feature = "runtime-wasmtime")]
 pub mod component_marshal;
 #[cfg(feature = "runtime-wasmtime")]
+pub mod composite_marshal;
+#[cfg(feature = "runtime-wasmtime")]
 pub mod wasmtime_backend;
 
 #[allow(unused_imports)]
