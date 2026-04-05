@@ -1,4 +1,9 @@
 //! Extension GUCs.
+//!
+//! `GucSetting::get` is single-thread-only in pgrx. For `cfg(test)` builds (the `cargo test`
+//! harness), helpers that unit tests hit use boot defaults instead of `.get()` so parallel test
+//! threads do not panic. The extension shared library from `cargo build --lib` is not built with
+//! `cfg(test)` and continues to read live GUC values in the PostgreSQL backend.
 
 use std::ffi::CString;
 
@@ -164,16 +169,30 @@ pub fn init() {
 }
 
 pub fn collect_metrics() -> bool {
-    PG_WASM_COLLECT_METRICS.get()
+    #[cfg(test)]
+    {
+        true
+    }
+    #[cfg(not(test))]
+    {
+        PG_WASM_COLLECT_METRICS.get()
+    }
 }
 
 pub fn host_policy_from_gucs() -> HostPolicy {
-    HostPolicy {
-        allow_env: PG_WASM_ALLOW_WASI_ENV.get(),
-        allow_fs_read: PG_WASM_ALLOW_WASI_FS_READ.get(),
-        allow_fs_write: PG_WASM_ALLOW_WASI_FS_WRITE.get(),
-        allow_network: PG_WASM_ALLOW_WASI_NETWORK.get(),
-        allow_wasi: PG_WASM_ALLOW_WASI.get(),
+    #[cfg(test)]
+    {
+        HostPolicy::default()
+    }
+    #[cfg(not(test))]
+    {
+        HostPolicy {
+            allow_env: PG_WASM_ALLOW_WASI_ENV.get(),
+            allow_fs_read: PG_WASM_ALLOW_WASI_FS_READ.get(),
+            allow_fs_write: PG_WASM_ALLOW_WASI_FS_WRITE.get(),
+            allow_network: PG_WASM_ALLOW_WASI_NETWORK.get(),
+            allow_wasi: PG_WASM_ALLOW_WASI.get(),
+        }
     }
 }
 
@@ -214,7 +233,16 @@ pub fn allowed_path_prefixes_raw() -> Option<CString> {
 
 /// Effective Wasm page cap: extension GUC intersected with optional per-module override.
 pub fn effective_max_memory_pages(module: ModuleId) -> u32 {
-    let g = PG_WASM_MAX_MEMORY_PAGES.get().max(0) as u32;
+    let g = {
+        #[cfg(test)]
+        {
+            4096u32
+        }
+        #[cfg(not(test))]
+        {
+            PG_WASM_MAX_MEMORY_PAGES.get().max(0) as u32
+        }
+    };
     let m = crate::registry::module_resource_limits(module).and_then(|r| r.max_memory_pages);
     match (g, m) {
         (0, None) => 0,
@@ -227,11 +255,27 @@ pub fn effective_max_memory_pages(module: ModuleId) -> u32 {
 /// Fuel for one guest entry: GUC (0 = unlimited) narrowed by per-module override.
 #[cfg(feature = "runtime-wasmtime")]
 pub fn auto_create_component_types() -> bool {
-    PG_WASM_AUTO_CREATE_COMPONENT_TYPES.get()
+    #[cfg(test)]
+    {
+        false
+    }
+    #[cfg(not(test))]
+    {
+        PG_WASM_AUTO_CREATE_COMPONENT_TYPES.get()
+    }
 }
 
 pub fn effective_fuel_per_invocation(module: ModuleId) -> u64 {
-    let g_raw = PG_WASM_FUEL_PER_INVOCATION.get().max(0) as u64;
+    let g_raw = {
+        #[cfg(test)]
+        {
+            500_000_000u64
+        }
+        #[cfg(not(test))]
+        {
+            PG_WASM_FUEL_PER_INVOCATION.get().max(0) as u64
+        }
+    };
     let global = if g_raw == 0 { u64::MAX } else { g_raw };
     let m = crate::registry::module_resource_limits(module).and_then(|r| r.fuel);
     match m {

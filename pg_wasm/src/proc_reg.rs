@@ -140,7 +140,20 @@ pub fn drop_wasm_trampoline_proc(oid: Oid) {
         return;
     }
     unsafe {
-        pg_sys::RemoveFunctionById(oid);
+        // `RemoveFunctionById` only deletes the `pg_proc` heap row and does not run the
+        // dependency machinery. Later DDL (e.g. `DROP SCHEMA CASCADE` on types used as
+        // argument types) can still walk `pg_depend` and try to delete the same OID again,
+        // hitting `cache lookup failed for function` inside `RemoveFunctionById`.
+        let addr = pg_sys::ObjectAddress {
+            classId: pg_sys::ProcedureRelationId,
+            objectId: oid,
+            objectSubId: 0,
+        };
+        pg_sys::performDeletion(
+            &addr,
+            pg_sys::DropBehavior::DROP_RESTRICT,
+            (pg_sys::PERFORM_DELETION_INTERNAL | pg_sys::PERFORM_DELETION_SKIP_EXTENSIONS) as i32,
+        );
     }
     unregister_fn_oid(oid);
 }

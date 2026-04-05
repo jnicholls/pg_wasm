@@ -1598,10 +1598,19 @@ mod component_export_tests {
             panic!("expected record, got {:?}", out[0]);
         };
         assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].0, "x");
-        assert_eq!(fields[1].0, "y");
-        assert!(matches!(fields[0].1, Val::S32(5)));
-        assert!(matches!(fields[1].1, Val::S32(6)));
+        // Component lifting may order record fields by canonical ABI, not WIT source order.
+        let x = fields
+            .iter()
+            .find(|(name, _)| name == "x")
+            .map(|(_, v)| v)
+            .expect("echo-point record should contain field x");
+        let y = fields
+            .iter()
+            .find(|(name, _)| name == "y")
+            .map(|(_, v)| v)
+            .expect("echo-point record should contain field y");
+        assert!(matches!(*x, Val::S32(5)));
+        assert!(matches!(*y, Val::S32(6)));
 
         let tout = call_component_export_dynamic(
             mid,
