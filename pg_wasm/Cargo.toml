@@ -5,11 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [lib]
-crate-type = ["cdylib", "lib"]
-
-[[bin]]
-name = "pgrx_embed_pg_wasm"
-path = "./src/bin/pgrx_embed.rs"
+crate-type = ["cdylib"]
 
 [features]
 default = ["pg13"]
