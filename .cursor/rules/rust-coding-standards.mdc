@@ -1,0 +1,46 @@
+---
+description: Rust style, imports, derives, and error handling for this workspace
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Rust coding standards
+
+- Prefer **Rust 2024 edition** idioms and language features where they fit the codebase.
+- Prefer the **current Rust version’s std**; use https://doc.rust-lang.org/std/ as the canonical std reference.
+
+## `#[derive(...)]`
+
+List proc-macro attributes in **alphabetical order**.
+
+```rust
+// ✅ GOOD
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+
+// ❌ BAD (arbitrary order)
+#[derive(Debug, PartialEq, Clone)]
+```
+
+## `use` imports
+
+1. **Three blocks** separated by **one blank line**: `std` / `core` / `alloc` first, then **third-party crates**, then **`crate` / `super` / `self`** (internal).
+2. Within each block, group by **top-level crate or module** and use `{}` for multiple items from the same path.
+
+```rust
+use std::fmt;
+
+use anyhow::Context;
+use serde::Deserialize;
+
+use crate::foo::Bar;
+```
+
+## Error handling
+
+- **Do not** use `unwrap()` on `Option` or `Result` outside **tests**; propagate, match, or use `?` / contextual helpers instead.
+- **Do not** use `expect()` when a **clearer** option exists (e.g. `?`, `map_err`, `context`, or an explicit branch).
+
+## Paths and imports
+
+- **Types**: avoid long paths like `crate::a::b::MyType`; `use` the type at module scope and refer to `MyType`.
+- **Functions / consts**: avoid deep paths like `crate::a::b::f()`; `use` the containing module (e.g. `use crate::a::b;`) and call `b::f()` so call sites stay **at most two segments** after the import (e.g. `module::item`).
