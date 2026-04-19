@@ -35,6 +35,12 @@ Apply these rules to **all Rust sources** (`*.rs`) in this workspace.
 
 When in doubt, match patterns already used in neighboring modules in this repository.
 
+## Crate dependencies and API documentation
+
+For **external crates**, assistants should only use APIs and behavior that match the **versions the project actually depends on**, as declared in **`Cargo.toml`** (workspace and crate manifests) and as **resolved** in practice (see `Cargo.lock`, or `cargo tree` / `cargo metadata` when versions need to be confirmed). When looking up types, traits, or functions, use documentation for **that** release — typically **https://docs.rs/** plus the crate name and a **version path segment** that matches the resolved crate version — not arbitrary newer releases.
+
+More detail: `.cursor/rules/dependency-api-docs.mdc`.
+
 ## Testing (`pg_wasm` / pgrx)
 
 The extension is built with **pgrx**. Tests are organized in three layers (same idea as [ParadeDB’s testing docs](https://github.com/paradedb/paradedb/blob/main/CONTRIBUTING.md#testing)); more detail lives in `.cursor/rules/pg-wasm-pgrx-testing.mdc`.

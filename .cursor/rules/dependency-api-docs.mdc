@@ -1,0 +1,17 @@
+---
+description: Match external crate APIs and docs.rs links to versions declared in Cargo.toml
+globs: "**/*.{rs,toml}"
+alwaysApply: false
+---
+
+# Dependency versions and API documentation
+
+For **external crates** (anything in `[dependencies]`, `[dev-dependencies]`, `[build-dependencies]`, and workspace `[workspace.dependencies]` — including `{ workspace = true }` entries), assistants should:
+
+- **Treat `Cargo.toml` as the source of truth** for which crates and version **requirements** the project uses (root workspace manifest and per-crate manifests such as `pg_wasm/Cargo.toml`). When reasoning about APIs, prefer the **semver-compatible version Cargo actually resolves** (see `Cargo.lock` or `cargo tree -p <crate>` / `cargo metadata`) when it differs from the minimal requirement string.
+- **Consult API documentation for that same resolved version**, not “latest crates.io” behavior. For published crates, **https://docs.rs/** plus the crate name is the usual entry point; deep links should include the **version segment** that matches the resolved release (for example `https://docs.rs/foo/1.2.3/foo/…`).
+- **Avoid** inventing or assuming APIs from other major/minor lines unless the manifest (or a deliberate upgrade) has moved the project to that line and docs have been checked for that version.
+
+For the **standard library**, follow project guidance (for example https://doc.rust-lang.org/std/) and the Rust toolchain version used here — that is separate from per-crate docs.rs versioning.
+
+When adding a new dependency, declare it in `Cargo.toml` first, then align code, examples, and documentation links with that crate’s version.
