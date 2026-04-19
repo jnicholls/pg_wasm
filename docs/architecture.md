@@ -352,24 +352,45 @@ next `Store` created. Epoch-based deadline changes take effect immediately
 
 ### 6.1 Engine
 
-A single `wasmtime::Engine` per backend process is built lazily on first use:
+A single `wasmtime::Engine` per backend process is built lazily on first use
+from a `wasmtime::Config` configured with the v43 builder-style API:
 
-- `Config::async_support(false)` — we run synchronously inside the Postgres
-  backend.
-- `Config::wasm_component_model(true)`.
-- `Config::epoch_interruption(true)` so we can enforce wall-clock deadlines.
-- `Config::consume_fuel(pg_wasm.fuel_enabled)` controlled by a GUC.
-- `Config::cache_config_load_default()` disabled — we manage our own on-disk
-  cache in `$PGDATA/pg_wasm/`.
+- `Config::wasm_component_model(true)` — required to compile and instantiate
+  components (`wasmtime::component::Component`). This is also the default
+  when the `component-model` crate feature is enabled, but we set it
+  explicitly so the engine fails fast if someone disables the feature.
+- `Config::epoch_interruption(true)` to enforce wall-clock deadlines. Stores
+  are configured with `Store::set_epoch_deadline` before each call and the
+  default expiration action (`Store::epoch_deadline_trap`) is kept so a
+  missed deadline produces `Trap::Interrupt`.
+- `Config::consume_fuel(pg_wasm.fuel_enabled)` to enable deterministic
+  per-call fuel budgets. When enabled we call `Store::set_fuel` at the start
+  of each invocation and read `Store::get_fuel` afterwards for metrics.
+- `Config::cache(None)` — we do not opt into Wasmtime's built-in module
+  cache and instead manage our own precompiled artifacts in
+  `$PGDATA/pg_wasm/`. (The legacy `Config::cache_config_load_default` method
+  from pre-v43 is gone; the `Cache` object is now passed explicitly and
+  `None` means "disabled", which is also the default.)
 - `Config::parallel_compilation(false)` to keep compile cost predictable
-  under PG's process-per-connection model (the regression suite otherwise
-  fights the scheduler).
+  under PG's process-per-connection model (the default is `true`, which
+  pulls in rayon and fights the scheduler during large regression runs).
+- **No** `Config::async_support` call. That method was deprecated in
+  Wasmtime 43 (`#[doc(hidden)]`, no-op). Store async is now inferred from
+  the APIs the store uses; for pg_wasm we stay synchronous and always call
+  `Func::call` / `TypedFunc::call` rather than their `_async` variants.
+
+Other settings we deliberately leave at their defaults: `wasm_backtrace`
+(on; useful for error reports), `native_unwind_info` (on), SIMD, bulk
+memory, reference types, multi-value, and the other stable proposals.
 
 The engine is shared across all modules loaded into a single backend. A
-dedicated OS thread drives epoch ticks at `pg_wasm.epoch_tick_ms` resolution
-(default 10 ms). The thread is started once via `std::sync::OnceLock` and
-runs until the backend exits; it is a plain `std::thread` and holds no
-Postgres resources.
+dedicated OS thread drives `Engine::increment_epoch` at
+`pg_wasm.epoch_tick_ms` resolution (default 10 ms). The thread is started
+once via `std::sync::OnceLock`, holds an `EngineWeak` obtained from
+`Engine::weak` (not a strong `Engine` clone), and `EngineWeak::upgrade`s on
+each tick so it exits naturally once the last `Engine` reference in the
+backend is dropped. It is a plain `std::thread` and holds no Postgres
+resources; `Engine::increment_epoch` is signal-safe per its documentation.
 
 ### 6.2 Compile and cache
 
@@ -379,8 +400,21 @@ Compilation happens in `pg_wasm.load`. The resulting `Component` (or
 1. **Process-local** `registry::MODULES` as a `ModuleHandle` wrapping the
    `Component` and any prepared `Linker`s.
 2. **On disk** at `$PGDATA/pg_wasm/<module_id>/module.cwasm` via
-   `Engine::precompile_component` so cold backends can
-   `Component::deserialize_file` without re-running the compiler.
+   `Engine::precompile_component` (or `Engine::precompile_module` for core
+   modules), so cold backends can deserialize via
+   `unsafe { Component::deserialize_file(&engine, &cwasm_path) }`
+   (or `Module::deserialize_file`) without re-running the compiler. Both
+   `deserialize*` entry points are `unsafe` in Wasmtime 43; we document the
+   invariants (trusted directory owned by the Postgres user, file content
+   produced by the same-versioned Wasmtime) and enforce them in
+   `artifacts.rs`.
+
+Artifact compatibility across Wasmtime and Postgres upgrades is verified
+with `Engine::precompile_compatibility_hash`, whose output is stored
+alongside the `.cwasm` file. When the stored hash does not match the
+current engine's, we delete the stale `.cwasm` and recompile from
+`module.wasm`. `Engine::detect_precompiled_file` is used as a cheap sanity
+check before ever calling `deserialize_file`.
 
 A backend that attaches to an already-loaded module for the first time goes
 through `load_handle_from_disk(module_id)`, which holds a per-module
@@ -388,16 +422,29 @@ through `load_handle_from_disk(module_id)`, which holds a per-module
 
 ### 6.3 Linker composition
 
-For components, v2 uses `wasmtime::component::Linker`. Imports are wired as
-follows:
+For components, v2 uses `wasmtime::component::Linker`. WASI is wired in
+through `wasmtime_wasi::p2::add_to_linker_sync` (Wasmtime 43 moved the
+preview-2 entry points under the `p2` module; the older
+`wasmtime_wasi::preview2` path no longer exists). Per-store WASI state is
+built with `wasmtime_wasi::WasiCtxBuilder`, produces a `WasiCtx`, and is
+exposed to the linker through an implementation of `wasmtime_wasi::WasiView`
+(which returns a `WasiCtxView { ctx, table }`). HTTP, when enabled, is
+wired via `wasmtime_wasi_http::p2::add_to_linker_sync` with a companion
+`WasiHttpCtx` and `WasiHttpView` implementation.
 
-| Import | Source | Controlled by |
-|--------|--------|---------------|
-| `wasi:cli/*`, `wasi:io/*`, `wasi:clocks/*`, `wasi:random/*` | `wasmtime-wasi` preview 2 | `pg_wasm.allow_wasi_*` GUCs |
-| `wasi:filesystem/*` | `wasmtime-wasi` with explicit preopens | `pg_wasm.allow_wasi_fs`, `pg_wasm.wasi_preopens` |
-| `wasi:sockets/*` | `wasmtime-wasi` with host allow list | `pg_wasm.allow_wasi_net`, `pg_wasm.allowed_hosts` |
-| `wasi:http/*` | `wasmtime-wasi-http` | `pg_wasm.allow_wasi_http` |
-| `pg_wasm:host/log`, `pg_wasm:host/query` | implemented in-process | always on (subject to policy) |
+| Import | Source (v43) | Controlled by |
+|--------|--------------|---------------|
+| `wasi:cli/*`, `wasi:io/*`, `wasi:clocks/*`, `wasi:random/*`, `wasi:filesystem/*`, `wasi:sockets/*` | `wasmtime_wasi::p2::add_to_linker_sync` + `WasiCtxBuilder` | `pg_wasm.allow_wasi_*` GUCs; filesystem preopens via `WasiCtxBuilder::preopened_dir`; sockets gated on `pg_wasm.allow_wasi_net`/`allowed_hosts` |
+| `wasi:http/*` | `wasmtime_wasi_http::p2::add_to_linker_sync` | `pg_wasm.allow_wasi_http` |
+| `pg_wasm:host/log`, `pg_wasm:host/query` | implemented in-process via `Linker::root().func_wrap(...)` | always on (subject to policy) |
+
+If a capability GUC is off, we skip the corresponding `add_to_linker_sync`
+call, which makes guest imports for that interface fail at instantiate time
+with a clear "unknown import" error rather than silently no-op'ing. For
+finer-grained subsetting, the per-interface `add_to_linker` functions on
+generated bindings (e.g. `wasmtime_wasi::p2::bindings::filesystem::types::add_to_linker`)
+can be used to opt into individual interfaces without opting into the
+whole `wasi:cli/imports` world.
 
 The `pg_wasm:host/query` interface lets a module issue SPI queries back into
 the executing backend (subject to `pg_wasm.allow_spi` and the caller's
@@ -417,10 +464,20 @@ Each call sequence:
 1. Borrow an instance from the pool (or construct one if the pool is under
    the limit). If all instances are in use *and* the pool is at capacity, a
    fresh one is constructed and dropped after the call (degraded path).
-2. Create a fresh `Store` with `StoreLimits` from `EffectivePolicy` and fuel
-   / epoch settings from GUCs.
-3. Invoke the typed export (`component::bindgen!` generated or dynamic via
-   `Func::call`).
+2. Create a fresh `Store<HostState>` (`wasmtime::Store::new(&engine, ..)`).
+   Configure it with `StoreLimits` built from `EffectivePolicy` via
+   `StoreLimitsBuilder` and attached with `Store::limiter`; set the per-call
+   fuel budget with `Store::set_fuel` (when fuel is enabled); and set the
+   epoch deadline with `Store::set_epoch_deadline` (ticks computed from
+   `pg_wasm.invocation_deadline_ms / pg_wasm.epoch_tick_ms`).
+3. Invoke the typed export. For the dynamic path we use
+   `wasmtime::component::Func::call(&mut store, &params, &mut results)`
+   with slices of `component::Val` (the v43 API takes a result buffer
+   rather than returning a `Vec`). For the static path we use
+   `wasmtime::component::bindgen!`-generated bindings and
+   `component::TypedFunc::call`. After a blocking synchronous component
+   call, `Func::post_return` is invoked to release lowered results before
+   the next call on the same instance.
 4. Update metrics; return the instance to the pool.
 
 Instances are rebuilt on every generation bump for the owning module.
@@ -465,6 +522,7 @@ are `pg_wasm.*`.
 | `allow_spi` | bool | `off` | Expose `pg_wasm:host/query`. |
 | `max_memory_pages` | int | `1024` | 64 MiB per instance. |
 | `max_instances_total` | int | `0` | `0` = unbounded process-wide. |
+| `instances_per_module` | int | `1` | Size of the per-backend per-module instance pool (§6.4). |
 | `fuel_enabled` | bool | `off` | Enforce `StoreLimits::fuel`. |
 | `fuel_per_invocation` | int | `100_000_000` | Only used if `fuel_enabled`. |
 | `invocation_deadline_ms` | int | `5000` | Epoch-based wall-clock cap; `0` = disabled. |
@@ -527,7 +585,18 @@ This is the largest change from v1.
 ### 8.1 WIT → PG type resolver
 
 `wit::typing` defines `PgType` as the canonical destination and implements
-`wit_to_pg: WitType -> Result<PgType, Error>`.
+`wit_to_pg(&Resolve, Type) -> Result<PgType, Error>` on top of
+`wit_parser::{Resolve, Type, TypeDef, TypeDefKind}` (from the v0.247
+`wit-parser` crate). The `Resolve` and the starting `WorldId` come from
+`wit_component::decode(&wasm_bytes)` — a `wit_component::DecodedWasm` in
+v0.247 has two variants, `WitPackage(Resolve, Id<Package>)` and
+`Component(Resolve, Id<World>)`; components always land in the latter
+arm. Named types go through `Resolve.types[TypeId]` to get a
+`wit_parser::TypeDef` whose `kind` drives the mapping below. `wit-parser`'s
+v0.247 vocabulary (records = `TypeDefKind::Record(Record)`, enums =
+`Enum`, flags = `Flags`, variants = `Variant`, results = `Result_`,
+resources via `TypeDefKind::Resource` / `Handle`) is used directly instead
+of an internal duplicate.
 
 | WIT type | PostgreSQL representation |
 |----------|---------------------------|
@@ -630,8 +699,13 @@ Notable properties:
   `std::panic::catch_unwind`. Panics inside host glue become SQL errors with
   the module id and export name.
 - **Interrupt handling**: Postgres query cancellation sets a flag the epoch
-  ticker thread observes; the next epoch bump ends the WASM call with
-  `Trap::Interrupt`, which the trampoline translates to `ERRCODE_QUERY_CANCELED`.
+  ticker thread observes; the next `Engine::increment_epoch` tick causes
+  the running call to terminate with `wasmtime::Trap::Interrupt` (the
+  default action configured by `Store::epoch_deadline_trap`). The
+  trampoline downcasts the `wasmtime::Error` to `Trap` and maps
+  `Trap::Interrupt` to `ERRCODE_QUERY_CANCELED`, and `Trap::OutOfFuel` to
+  `ERRCODE_PROGRAM_LIMIT_EXCEEDED`. Other `Trap` variants map to
+  `ERRCODE_EXTERNAL_ROUTINE_EXCEPTION` with the variant name in DETAIL.
 - **Volatility**: registered UDFs are declared `VOLATILE PARALLEL UNSAFE`.
   A module may opt into `STABLE` via `options.exports[name].volatility`
   (operators take responsibility for correctness).
@@ -778,8 +852,14 @@ No `runtime-extism`, no `runtime-wasmer`: v2 is Wasmtime-only.
 
 - **PostgreSQL upgrade (`pg_upgrade`).** Catalog tables and artifacts survive
   intact; on first backend connect after upgrade, artifacts are recompiled
-  into `.cwasm` if `Engine::is_compatible_with_precompiled_component_file`
-  rejects them. Row-level state (counters) is re-initialized.
+  into `.cwasm` if the stored `Engine::precompile_compatibility_hash` does
+  not match the current engine's. That hash — recorded alongside each
+  `module.cwasm` when it is written — is the officially supported way in
+  Wasmtime 43 to gate deserialization across engine versions. If the hash
+  matches, we still run `Engine::detect_precompiled_file` as a cheap
+  sanity check before the `unsafe` `Component::deserialize_file` /
+  `Module::deserialize_file` call. Row-level state (counters in shared
+  memory) is re-initialized.
 - **Extension upgrade.** `sql/pg_wasm--X.Y--X.Z.sql` files carry DDL
   migrations. `catalog::migrations` asserts table shape at `_PG_init`.
 - **Wasmtime upgrade.** Same artifact-recompile flow as `pg_upgrade`.
