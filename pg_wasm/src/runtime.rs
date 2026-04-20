@@ -1,8 +1,6 @@
 //! Wasmtime engine and epoch-ticker runtime primitives.
 
-use std::collections::hash_map::DefaultHasher;
 use std::ffi::c_int;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -102,7 +100,7 @@ fn register_epoch_ticker_exit_hook() {
     unsafe {
         pg_sys::on_proc_exit(
             Some(on_proc_exit_epoch_ticker),
-            pgrx::prelude::Datum::from(0usize),
+            pg_sys::Datum::from(0usize),
         );
     }
 }
@@ -158,6 +156,8 @@ pub(crate) fn run_epoch_ticker_loop(
 
 #[cfg(test)]
 mod host_tests {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
     use std::sync::mpsc;
 
     use super::*;
@@ -224,7 +224,7 @@ mod host_tests {
 
 #[cfg(any(test, feature = "pg_test"))]
 #[pgrx::pg_schema]
-mod pg_tests {
+mod tests {
     use pgrx::prelude::*;
 
     use super::engine;
