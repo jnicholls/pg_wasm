@@ -29,7 +29,7 @@ todos:
     status: pending
   - id: shmem-and-generation
     content: Implement `shmem.rs` with a per-cluster segment sized by fixed compile-time constants (module slots and export slots). Provide `bump_generation(module_id)`, `read_generation()`, and atomic per-export counters. Protect mutators with `pg_wasm.CatalogLock` (LWLock). Wire into `shmem_request_hook` and `shmem_startup_hook`.
-    status: pending
+    status: completed
   - id: artifacts-layout
     content: Implement `artifacts.rs` for `$PGDATA/pg_wasm/<module_id>/` (module.wasm, module.cwasm, world.wit). Include atomic write (temp + rename), directory fsync, checksum verification (sha256), and a `prune_stale` helper for orphaned dirs.
     status: pending
