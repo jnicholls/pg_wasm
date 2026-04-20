@@ -35,8 +35,6 @@ pub(crate) static MODULE_PATH: GucSetting<Option<CString>> =
 pub(crate) static ALLOWED_PATH_PREFIXES: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(Some(c""));
 pub(crate) static MAX_MODULE_BYTES: GucSetting<i32> = GucSetting::<i32>::new(33_554_432);
-pub(crate) static MAX_MODULES: GucSetting<i32> = GucSetting::<i32>::new(256);
-pub(crate) static MAX_EXPORTS: GucSetting<i32> = GucSetting::<i32>::new(4_096);
 pub(crate) static ALLOW_WASI: GucSetting<bool> = GucSetting::<bool>::new(false);
 pub(crate) static ALLOW_WASI_STDIO: GucSetting<bool> = GucSetting::<bool>::new(false);
 pub(crate) static ALLOW_WASI_ENV: GucSetting<bool> = GucSetting::<bool>::new(false);
@@ -106,28 +104,6 @@ pub(crate) fn register_gucs() {
         i32::MAX,
         GucContext::Suset,
         GucFlags::UNIT_BYTE,
-    );
-
-    GucRegistry::define_int_guc(
-        c"pg_wasm.max_modules",
-        c"Maximum modules tracked in shared metrics arrays.",
-        c"Postmaster-startup sizing bound for shared-memory module metrics slots.",
-        &MAX_MODULES,
-        1,
-        i32::MAX,
-        GucContext::Postmaster,
-        GucFlags::default(),
-    );
-
-    GucRegistry::define_int_guc(
-        c"pg_wasm.max_exports",
-        c"Maximum exports tracked in shared metrics arrays.",
-        c"Postmaster-startup sizing bound for shared-memory export metrics slots.",
-        &MAX_EXPORTS,
-        1,
-        i32::MAX,
-        GucContext::Postmaster,
-        GucFlags::default(),
     );
 
     GucRegistry::define_bool_guc(

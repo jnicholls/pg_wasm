@@ -223,8 +223,9 @@ extension never trusts catalog rows without a matching checksum on disk.
 - A flat array of **per-module gauges**: current live instances, peak memory
   pages observed, last error timestamp.
 
-The segment is sized from `pg_wasm.max_modules` and `pg_wasm.max_exports`
-GUCs (bounded at start-up). If more modules than capacity are loaded, the
+The segment is sized by fixed compile-time constants in `shmem.rs`
+(`SHMEM_MODULE_SLOTS = 256`, `SHMEM_EXPORT_SLOTS = 4096`). If more modules
+than capacity are loaded, the
 excess gets dynamic (non-shared) counters and `pg_wasm.stats` reports
 `shared := false` for those rows; this is a degraded mode, not an error.
 
@@ -509,8 +510,6 @@ are `pg_wasm.*`.
 | `module_path` | string | `''` | Root for relative paths on load. |
 | `allowed_path_prefixes` | string | `''` | Comma-separated; canonicalized paths must fall under one. |
 | `max_module_bytes` | int | `33554432` | 32 MiB cap on WASM size. |
-| `max_modules` | int | `256` | Shared-memory array size. |
-| `max_exports` | int | `4096` | Shared-memory array size. |
 | `allow_wasi` | bool | `off` | Master WASI toggle; required for any `allow_wasi_*`. |
 | `allow_wasi_stdio` | bool | `off` | stdout/stderr inheritance. |
 | `allow_wasi_env` | bool | `off` | Environment variable inheritance. |
@@ -529,6 +528,10 @@ are `pg_wasm.*`.
 | `epoch_tick_ms` | int | `10` | Resolution of the epoch ticker thread. |
 | `collect_metrics` | bool | `on` | Increment atomics in shmem. |
 | `log_level` | enum | `notice` | Verbosity of load/unload/reload events. |
+
+Shared-memory slot counts are fixed constants in `shmem.rs`
+(`SHMEM_MODULE_SLOTS = 256`, `SHMEM_EXPORT_SLOTS = 4096`) rather than GUCs.
+Overflow still degrades to non-shared counters with `shared := false`.
 
 All `allow_*` GUCs default to **off**. The extension is useless without
 flipping them — that is intentional.

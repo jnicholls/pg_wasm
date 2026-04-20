@@ -22,13 +22,13 @@ todos:
       temporarily as a smoke test.
     status: completed
   - id: errors-and-guc
-    content: Implement `errors::PgWasmError` with SQLSTATE mapping and define every `pg_wasm.*` GUC in `guc.rs` (enabled, allow_load_from_file, module_path, allowed_path_prefixes, max_module_bytes, max_modules, max_exports, allow_wasi, allow_wasi_{stdio,env,fs,net,http}, wasi_preopens, allowed_hosts, allow_spi, max_memory_pages, max_instances_total, instances_per_module, fuel_enabled, fuel_per_invocation, invocation_deadline_ms, epoch_tick_ms, collect_metrics, log_level, follow_symlinks). Register them in `_PG_init`.
+    content: Implement `errors::PgWasmError` with SQLSTATE mapping and define every `pg_wasm.*` GUC in `guc.rs` (enabled, allow_load_from_file, module_path, allowed_path_prefixes, max_module_bytes, allow_wasi, allow_wasi_{stdio,env,fs,net,http}, wasi_preopens, allowed_hosts, allow_spi, max_memory_pages, max_instances_total, instances_per_module, fuel_enabled, fuel_per_invocation, invocation_deadline_ms, epoch_tick_ms, collect_metrics, log_level, follow_symlinks). Register them in `_PG_init`.
     status: completed
   - id: catalog-schema
     content: Add `pg_wasm.modules`, `pg_wasm.exports`, `pg_wasm.wit_types`, `pg_wasm.dependencies` tables in versioned SQL. Implement `catalog::{modules,exports,wit_types}` CRUD via SPI. Set up `pg_wasm_loader` and `pg_wasm_reader` roles with minimal grants. Add `catalog::migrations` that validates shape on `_PG_init`.
     status: pending
   - id: shmem-and-generation
-    content: Implement `shmem.rs` with a per-cluster segment sized by `max_modules` / `max_exports`. Provide `bump_generation(module_id)`, `read_generation()`, and atomic per-export counters. Protect mutators with `pg_wasm.CatalogLock` (LWLock). Wire into `shmem_request_hook` and `shmem_startup_hook`.
+    content: Implement `shmem.rs` with a per-cluster segment sized by fixed compile-time constants (module slots and export slots). Provide `bump_generation(module_id)`, `read_generation()`, and atomic per-export counters. Protect mutators with `pg_wasm.CatalogLock` (LWLock). Wire into `shmem_request_hook` and `shmem_startup_hook`.
     status: pending
   - id: artifacts-layout
     content: Implement `artifacts.rs` for `$PGDATA/pg_wasm/<module_id>/` (module.wasm, module.cwasm, world.wit). Include atomic write (temp + rename), directory fsync, checksum verification (sha256), and a `prune_stale` helper for orphaned dirs.
@@ -228,7 +228,7 @@ The full rationale lives in [`docs/architecture.md`](../../docs/architecture.md)
 
 - **One trampoline symbol**, many `pg_proc` rows, resolution via `flinfo->fn_oid` → `(module_id, export)` in a generation-aware process-local cache.
 - **Durable catalog** (`pg_wasm.modules`, `pg_wasm.exports`, `pg_wasm.wit_types`, `pg_wasm.dependencies`) plus **on-disk artifacts** (`$PGDATA/pg_wasm/<module_id>/{module.wasm,module.cwasm,world.wit}`).
-- **Shared memory** carries the generation counter and per-export atomic counters; sized by bounded GUCs; overflow falls back to non-shared counters with `shared := false`.
+- **Shared memory** carries the generation counter and per-export atomic counters; sized by fixed constants; overflow falls back to non-shared counters with `shared := false`.
 - **Policy narrowing** is enforced in `policy::resolve`; per-module overrides can only deny what GUCs permit.
 - **WIT resolver** is deterministic and stable so reload can preserve OIDs on unchanged types.
 - **Wasmtime configuration**: component model on, epoch interruption on, parallel compilation off, async off, fuel optional.
@@ -242,7 +242,7 @@ The full rationale lives in [`docs/architecture.md`](../../docs/architecture.md)
 - **WIT dynamic marshaling overhead.** Walking the type tree on every call is measurable. Mitigation: cache the marshal plan per export at load time; revisit with bindgen-generated specializations after v2 lands if profiling shows hot spots.
 - **Wasmtime vs PG version interactions.** pgrx, PG major versions, and Wasmtime all move. Mitigation: lock Wasmtime in the workspace, run the full `cargo pgrx test` matrix on pg13..pg18 in CI, treat `Engine::is_compatible_with_*` as the upgrade oracle.
 - **Reload OID preservation corner cases.** `ALTER TYPE ADD/DROP ATTRIBUTE` on composite types has restrictions (e.g. must not have dependent rows of the type). Mitigation: detect unsupported transitions up front, error with a specific hint, require `breaking_changes_allowed` to continue.
-- **Shared-memory sizing.** `max_modules` / `max_exports` are bounded at start-up. Mitigation: document the overflow behavior (`shared := false`), surface in `pg_wasm.stats()`, add a startup log line showing actual sizing.
+- **Shared-memory sizing.** Module/export shared-counter slots are fixed constants. Mitigation: document the overflow behavior (`shared := false`) and surface it in `pg_wasm.stats()`.
 - **WASI surface growth.** New WASI interfaces arrive regularly. Mitigation: explicit allow-list in `runtime::wasi::build_linker`; unknown interfaces cause instantiation failure with a helpful error.
 - **Epoch-ticker thread lifecycle.** A per-process thread must not outlive the backend. Mitigation: start lazily via `OnceLock`, terminate on `atexit` hook registered from `_PG_init`; avoid storing any pgrx handles inside the thread.
 
