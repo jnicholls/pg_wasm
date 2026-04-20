@@ -26,7 +26,7 @@ todos:
     status: completed
   - id: catalog-schema
     content: Add `pg_wasm.modules`, `pg_wasm.exports`, `pg_wasm.wit_types`, `pg_wasm.dependencies` tables in versioned SQL. Implement `catalog::{modules,exports,wit_types}` CRUD via SPI. Set up `pg_wasm_loader` and `pg_wasm_reader` roles with minimal grants. Add `catalog::migrations` that validates shape on `_PG_init`.
-    status: pending
+    status: completed
   - id: shmem-and-generation
     content: Implement `shmem.rs` with a per-cluster segment sized by fixed compile-time constants (module slots and export slots). Provide `bump_generation(module_id)`, `read_generation()`, and atomic per-export counters. Protect mutators with `pg_wasm.CatalogLock` (LWLock). Wire into `shmem_request_hook` and `shmem_startup_hook`.
     status: pending
@@ -45,7 +45,7 @@ todos:
       bytes to Wasmtime. Honor `options.abi` only to force `core` parsing;
       reject unknown encodings with `PgWasmError::ValidationFailed`. Add
       host-only unit tests with hand-crafted binaries.
-    status: pending
+    status: completed
   - id: engine-and-epoch-ticker
     content: |
       Implement `runtime::engine::shared_engine()` returning a lazily-initialized
