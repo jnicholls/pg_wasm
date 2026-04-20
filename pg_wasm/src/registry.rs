@@ -26,7 +26,7 @@ pub(crate) struct ModuleEntry {
 }
 
 #[derive(Debug, Default)]
-struct RegistryInner {
+pub(crate) struct RegistryInner {
     generation: u64,
     by_fn_oid: HashMap<Oid, RegistryEntry>,
     by_module_id: HashMap<u64, ModuleEntry>,
@@ -140,6 +140,8 @@ fn registry_write() -> RwLockWriteGuard<'static, RegistryInner> {
 mod tests {
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
+
+    use pgrx::pg_sys::Oid;
 
     use super::{
         refresh_from_catalog_with_sources, registry_write, resolve_fn_oid_with_sources,
