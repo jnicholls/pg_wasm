@@ -1,6 +1,6 @@
 //! `pg_proc` registration and DDL generation support.
 
-use std::ffi::{CStr, c_void};
+use std::ffi::{c_void, CStr};
 use std::os::raw::c_char;
 
 use pgrx::list::List;
@@ -12,6 +12,9 @@ use crate::errors::PgWasmError;
 
 const EXTENSION_LIBRARY_PATH: &str = "$libdir/pg_wasm";
 const TRAMPOLINE_SYMBOL: &str = "pg_wasm_udf_trampoline";
+
+#[cfg(any(feature = "pg17", feature = "pg18"))]
+type ProcSqlBody = *mut pg_sys::Node;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcArgMode {
@@ -124,31 +127,15 @@ pub(crate) fn register(
         // SAFETY: every pointer argument is either a valid palloc-backed C string/list/array
         // for the duration of this call or a null pointer when PostgreSQL expects optional null.
         // Scalar arguments are validated and translated according to PostgreSQL's ProcedureCreate API.
-        pg_sys::ProcedureCreate(
-            spec.name.as_pg_cstr(),
+        procedure_create(
+            spec,
             schema_oid,
             replace_exports,
-            spec.returns_set,
-            spec.ret_type,
-            pg_sys::GetUserId(),
             c_language_oid,
-            pg_sys::Oid::from(pg_sys::F_FMGR_C_VALIDATOR),
-            TRAMPOLINE_SYMBOL.as_pg_cstr(),
-            EXTENSION_LIBRARY_PATH.as_pg_cstr(),
-            pg_sys::PROKIND_FUNCTION as c_char,
-            false,
-            false,
-            spec.strict,
-            spec.volatility.to_pg_char(),
-            spec.parallel.to_pg_char(),
             arg_type_vector,
             all_arg_types,
             arg_modes,
             arg_names,
-            std::ptr::null_mut(),
-            Datum::null(),
-            Datum::null(),
-            pg_sys::InvalidOid,
             procost,
             prorows,
         )
@@ -189,6 +176,105 @@ pub(crate) fn unregister(fn_oid: pg_sys::Oid) -> Result<(), PgWasmError> {
         pg_sys::RemoveFunctionById(fn_oid);
     }
     Ok(())
+}
+
+#[cfg(feature = "pg13")]
+unsafe fn procedure_create(
+    spec: &ProcSpec,
+    schema_oid: pg_sys::Oid,
+    replace_exports: bool,
+    c_language_oid: pg_sys::Oid,
+    arg_type_vector: *mut pg_sys::oidvector,
+    all_arg_types: Datum,
+    arg_modes: Datum,
+    arg_names: Datum,
+    procost: f32,
+    prorows: f32,
+) -> pg_sys::ObjectAddress {
+    unsafe {
+        // SAFETY: caller validates arguments and pointer lifetimes for ProcedureCreate.
+        pg_sys::ProcedureCreate(
+            spec.name.as_pg_cstr(),
+            schema_oid,
+            replace_exports,
+            spec.returns_set,
+            spec.ret_type,
+            pg_sys::GetUserId(),
+            c_language_oid,
+            pg_sys::Oid::from(pg_sys::F_FMGR_C_VALIDATOR),
+            TRAMPOLINE_SYMBOL.as_pg_cstr(),
+            EXTENSION_LIBRARY_PATH.as_pg_cstr(),
+            pg_sys::PROKIND_FUNCTION as c_char,
+            false,
+            false,
+            spec.strict,
+            spec.volatility.to_pg_char(),
+            spec.parallel.to_pg_char(),
+            arg_type_vector,
+            all_arg_types,
+            arg_modes,
+            arg_names,
+            std::ptr::null_mut(),
+            Datum::null(),
+            Datum::null(),
+            pg_sys::InvalidOid,
+            procost,
+            prorows,
+        )
+    }
+}
+
+#[cfg(any(
+    feature = "pg14",
+    feature = "pg15",
+    feature = "pg16",
+    feature = "pg17",
+    feature = "pg18"
+))]
+unsafe fn procedure_create(
+    spec: &ProcSpec,
+    schema_oid: pg_sys::Oid,
+    replace_exports: bool,
+    c_language_oid: pg_sys::Oid,
+    arg_type_vector: *mut pg_sys::oidvector,
+    all_arg_types: Datum,
+    arg_modes: Datum,
+    arg_names: Datum,
+    procost: f32,
+    prorows: f32,
+) -> pg_sys::ObjectAddress {
+    unsafe {
+        // SAFETY: caller validates arguments and pointer lifetimes for ProcedureCreate.
+        pg_sys::ProcedureCreate(
+            spec.name.as_pg_cstr(),
+            schema_oid,
+            replace_exports,
+            spec.returns_set,
+            spec.ret_type,
+            pg_sys::GetUserId(),
+            c_language_oid,
+            pg_sys::Oid::from(pg_sys::F_FMGR_C_VALIDATOR),
+            TRAMPOLINE_SYMBOL.as_pg_cstr(),
+            EXTENSION_LIBRARY_PATH.as_pg_cstr(),
+            std::ptr::null_mut(),
+            pg_sys::PROKIND_FUNCTION as c_char,
+            false,
+            false,
+            spec.strict,
+            spec.volatility.to_pg_char(),
+            spec.parallel.to_pg_char(),
+            arg_type_vector,
+            all_arg_types,
+            arg_modes,
+            arg_names,
+            std::ptr::null_mut(),
+            Datum::null(),
+            Datum::null(),
+            pg_sys::InvalidOid,
+            procost,
+            prorows,
+        )
+    }
 }
 
 fn argument_types_ptr(spec: &ProcSpec) -> *const pg_sys::Oid {
@@ -258,10 +344,7 @@ fn validate_spec(spec: &ProcSpec) -> Result<(), PgWasmError> {
 
 fn to_i32(value: usize, description: &str) -> Result<i32, PgWasmError> {
     i32::try_from(value).map_err(|_| {
-        PgWasmError::InvalidConfiguration(format!(
-            "{} exceeds i32::MAX ({value})",
-            description
-        ))
+        PgWasmError::InvalidConfiguration(format!("{} exceeds i32::MAX ({value})", description))
     })
 }
 
@@ -276,8 +359,10 @@ fn lookup_proc_oid(spec: &ProcSpec) -> Result<pg_sys::Oid, PgWasmError> {
                 pg_sys::makeString(spec.schema.as_pg_cstr()).cast::<c_void>(),
                 mcx,
             );
-            funcname
-                .unstable_push_in_context(pg_sys::makeString(spec.name.as_pg_cstr()).cast::<c_void>(), mcx);
+            funcname.unstable_push_in_context(
+                pg_sys::makeString(spec.name.as_pg_cstr()).cast::<c_void>(),
+                mcx,
+            );
 
             pg_sys::LookupFuncName(funcname.into_ptr(), nargs, argument_types_ptr(spec), true)
         })
@@ -414,12 +499,13 @@ fn render_type_name(type_oid: pg_sys::Oid) -> String {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use pgrx::prelude::{PgSqlErrorCode, Spi};
     use pgrx::pg_sys::{self, AsPgCStr};
+    use pgrx::pg_test;
+    use pgrx::prelude::{PgSqlErrorCode, Spi};
 
     use crate::errors::PgWasmError;
 
-    use super::{Parallel, ProcSpec, Volatility, collision_message, register, unregister};
+    use super::{collision_message, register, unregister, Parallel, ProcSpec, Volatility};
 
     static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -483,7 +569,8 @@ mod tests {
     fn register_with_replace_false_returns_collision_error() {
         let spec = base_spec(unique_name("proc_reg_collision"));
         let extension_oid = extension_oid();
-        let fn_oid = register(&spec, extension_oid, false).expect("initial register should succeed");
+        let fn_oid =
+            register(&spec, extension_oid, false).expect("initial register should succeed");
 
         let error = register(&spec, extension_oid, false).expect_err("collision should error");
         assert_eq!(
