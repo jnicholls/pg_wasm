@@ -11,6 +11,14 @@ Apply these rules to **Rust sources** (`*.rs`) and **Cargo manifests** (`Cargo.t
 - Prefer **Rust 2024 edition** capabilities and idioms when they match existing project style.
 - Prefer features and APIs from the **latest Rust toolchain** used by the project; treat the standard library as authoritative at https://doc.rust-lang.org/std/.
 
+### Symbol visibility
+
+Prioritize symbol visibility in this order, from most restrictive to least restrictive:
+
+1. Private (default). If a symbol does not need to be referenced outside of its (sub)module hierarchy, keep it private.
+2. `pub(crate)`. If a symbol needs to be referenced in another module tree within the crate, scope its visibility to `pub(crate)` only.
+3. `pub`. Only if a symbol must be referenced by another crate entirely—whether within this workspace or by a third-party user—scope its visibility to `pub`.
+
 ### `#[derive(...)]` attribute order
 
 - List every `#[derive(...)]` proc-macro attribute in **strict alphabetical order** (e.g. `Clone` before `Debug` before `Eq`).
@@ -52,6 +60,12 @@ anyhow = "1"
 - **Functions and constants**: do not call through long paths like `crate::module1::module2::function()`. Import the **leaf module** you need (for example `use crate::module1::module2`) and call **`module2::function()`** so references stay shallow (typically **two path segments** after the import).
 
 When in doubt, match patterns already used in neighboring modules in this repository.
+
+### Checks and actions to perform after iterating on code
+
+- `cargo fmt --all` to ensure all code is formatted according to our rustfmt rules.
+- `cargo check --workspace` to ensure the whole workspace has valid syntax and type checks pass.
+- Ensure there are no compiler or lint warnings by addressing them accordingly.
 
 ## Crate dependencies and API documentation
 

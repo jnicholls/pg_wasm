@@ -11,6 +11,14 @@ alwaysApply: false
 - Prefer **Rust 2024 edition** idioms and language features where they fit the codebase.
 - Prefer the **current Rust version’s std**; use https://doc.rust-lang.org/std/ as the canonical std reference.
 
+## Symbol visibility
+
+Prioritize symbol visibility in this order, from most restrictive to least restrictive:
+
+1. Private (default). If a symbol does not need to be referenced outside of its (sub)module hierarchy, keep it private.
+2. `pub(crate)`. If a symbol needs to be referenced in another module tree within the crate, scope its visibility to `pub(crate)` only.
+3. `pub`. Only if a symbol must be referenced by another crate entirely—whether within this workspace or by a third-party user—scope its visibility to `pub`.
+
 ## `#[derive(...)]`
 
 List proc-macro attributes in **alphabetical order**.
@@ -70,3 +78,8 @@ anyhow = "1"
 - **Types**: avoid long paths like `crate::a::b::MyType`; `use` the type at module scope and refer to `MyType`.
 - **Functions / consts**: avoid deep paths like `crate::a::b::f()`; `use` the containing module (e.g. `use crate::a::b;`) and call `b::f()` so call sites stay **at most two segments** after the import (e.g. `module::item`).
 
+## Checks and actions to perform after iterating on code
+
+- `cargo fmt --all` to ensure all code is formatted according to our rustfmt rules.
+- `cargo check --workspace` to ensure the whole workspace has valid syntax and type checks pass.
+- Ensure there are no compiler or lint warnings by addressing them accordingly.
