@@ -24,6 +24,9 @@ mod wit;
 #[pg_guard]
 pub extern "C-unwind" fn _PG_init() {
     guc::register_gucs();
+    shmem::init();
+    runtime::init();
+    catalog::init();
 }
 
 #[pg_extern]
