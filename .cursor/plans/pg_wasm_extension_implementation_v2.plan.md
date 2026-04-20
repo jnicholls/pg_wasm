@@ -20,7 +20,7 @@ todos:
       `wit-component = "0.247"`, `wit-parser = "0.247"`, `wasmparser = "0.247"`,
       plus `serde_json`, `thiserror`, `anyhow`, `sha2`. Keep `hello_pg_wasm`
       temporarily as a smoke test.
-    status: pending
+    status: completed
   - id: errors-and-guc
     content: Implement `errors::PgWasmError` with SQLSTATE mapping and define every `pg_wasm.*` GUC in `guc.rs` (enabled, allow_load_from_file, module_path, allowed_path_prefixes, max_module_bytes, max_modules, max_exports, allow_wasi, allow_wasi_{stdio,env,fs,net,http}, wasi_preopens, allowed_hosts, allow_spi, max_memory_pages, max_instances_total, instances_per_module, fuel_enabled, fuel_per_invocation, invocation_deadline_ms, epoch_tick_ms, collect_metrics, log_level, follow_symlinks). Register them in `_PG_init`.
     status: pending

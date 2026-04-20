@@ -1,5 +1,23 @@
 use pgrx::prelude::*;
 
+mod abi;
+mod artifacts;
+mod catalog;
+mod config;
+mod errors;
+mod guc;
+mod hooks;
+mod lifecycle;
+mod mapping;
+mod policy;
+mod proc_reg;
+mod registry;
+mod runtime;
+mod shmem;
+mod trampoline;
+mod views;
+mod wit;
+
 ::pgrx::pg_module_magic!(name, version);
 
 #[pg_extern]

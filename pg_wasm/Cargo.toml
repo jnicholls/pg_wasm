@@ -18,7 +18,17 @@ pg18 = ["pgrx/pg18", "pgrx-tests/pg18" ]
 pg_test = []
 
 [dependencies]
+anyhow.workspace = true
 pgrx.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+wasmparser.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+wasmtime-wasi-http.workspace = true
+wit-component.workspace = true
+wit-parser.workspace = true
 
 [dev-dependencies]
 pgrx-tests.workspace = true
