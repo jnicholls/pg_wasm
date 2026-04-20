@@ -1,4 +1,8 @@
+SET allow_system_table_mods = on;
+SELECT pg_catalog.set_config('allow_system_table_mods', 'on', false);
+
 CREATE SCHEMA IF NOT EXISTS pg_wasm;
+RESET allow_system_table_mods;
 
 CREATE TABLE IF NOT EXISTS pg_wasm.modules (
     module_id BIGSERIAL PRIMARY KEY,
@@ -49,34 +53,48 @@ CREATE TABLE IF NOT EXISTS pg_wasm.dependencies (
 );
 
 DO $$
+DECLARE
+    loader_role TEXT;
+    reader_role TEXT;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'pg_wasm_loader') THEN
-        CREATE ROLE pg_wasm_loader NOLOGIN;
-    END IF;
+    -- PostgreSQL reserves pg_* role names; fall back to pgwasm_* where required.
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'pg_wasm_loader') THEN
+            CREATE ROLE pg_wasm_loader NOLOGIN;
+        END IF;
+        loader_role := 'pg_wasm_loader';
+    EXCEPTION
+        WHEN SQLSTATE '42939' THEN
+            IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'pgwasm_loader') THEN
+                CREATE ROLE pgwasm_loader NOLOGIN;
+            END IF;
+            loader_role := 'pgwasm_loader';
+    END;
+
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'pg_wasm_reader') THEN
+            CREATE ROLE pg_wasm_reader NOLOGIN;
+        END IF;
+        reader_role := 'pg_wasm_reader';
+    EXCEPTION
+        WHEN SQLSTATE '42939' THEN
+            IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'pgwasm_reader') THEN
+                CREATE ROLE pgwasm_reader NOLOGIN;
+            END IF;
+            reader_role := 'pgwasm_reader';
+    END;
+
+    EXECUTE format('GRANT USAGE ON SCHEMA pg_wasm TO %I', loader_role);
+    EXECUTE format('GRANT USAGE ON SCHEMA pg_wasm TO %I', reader_role);
+
+    EXECUTE format(
+        'GRANT SELECT ON TABLE pg_wasm.dependencies, pg_wasm.exports, pg_wasm.modules, pg_wasm.wit_types TO %I',
+        reader_role
+    );
+
+    EXECUTE format(
+        'GRANT DELETE, INSERT, SELECT, UPDATE ON TABLE pg_wasm.dependencies, pg_wasm.exports, pg_wasm.modules, pg_wasm.wit_types TO %I',
+        loader_role
+    );
 END
 $$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'pg_wasm_reader') THEN
-        CREATE ROLE pg_wasm_reader NOLOGIN;
-    END IF;
-END
-$$;
-
-GRANT USAGE ON SCHEMA pg_wasm TO pg_wasm_loader;
-GRANT USAGE ON SCHEMA pg_wasm TO pg_wasm_reader;
-
-GRANT SELECT ON TABLE
-    pg_wasm.dependencies,
-    pg_wasm.exports,
-    pg_wasm.modules,
-    pg_wasm.wit_types
-TO pg_wasm_reader;
-
-GRANT DELETE, INSERT, SELECT, UPDATE ON TABLE
-    pg_wasm.dependencies,
-    pg_wasm.exports,
-    pg_wasm.modules,
-    pg_wasm.wit_types
-TO pg_wasm_loader;

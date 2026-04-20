@@ -8,6 +8,8 @@ use serde_json::Value;
 
 use crate::errors::{PgWasmError, Result};
 
+pgrx::extension_sql_file!("../sql/pg_wasm--0.1.0.sql", name = "pg_wasm_catalog_schema");
+
 fn default_json_object() -> Value {
     Value::Object(serde_json::Map::new())
 }
@@ -108,7 +110,9 @@ pub(crate) mod modules {
                 None,
                 &[],
             )?;
-            rows.into_iter().map(|row| module_from_row(&row)).collect()
+            rows.into_iter()
+                .map(|row| module_from_row(&row))
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing module rows", error))
     }
@@ -147,9 +151,11 @@ pub(crate) mod modules {
                 updated_module.generation.into(),
             ];
 
-            maybe_first(client.update(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| module_from_row(&row))
-                .transpose()
+            Ok(
+                maybe_first(client.update(sql.as_str(), Some(1), args.as_slice())?)
+                    .map(|row| module_from_row(&row))
+                    .transpose()?,
+            )
         })
         .map_err(|error| map_spi_error("updating module row", error))
     }
@@ -181,9 +187,11 @@ pub(crate) mod modules {
 
         Spi::connect(|client| {
             let args = vec![value];
-            maybe_first(client.select(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| module_from_row(&row))
-                .transpose()
+            Ok(
+                maybe_first(client.select(sql.as_str(), Some(1), args.as_slice())?)
+                    .map(|row| module_from_row(&row))
+                    .transpose()?,
+            )
         })
         .map_err(|error| map_spi_error("reading module row", error))
     }
@@ -221,10 +229,8 @@ pub(crate) mod modules {
         rows.next().ok_or(spi::Error::InvalidPosition)
     }
 
-    fn maybe_first(
-        mut rows: SpiTupleTable<'_>,
-    ) -> core::result::Result<Option<SpiHeapTupleData<'_>>, spi::Error> {
-        Ok(rows.next())
+    fn maybe_first(mut rows: SpiTupleTable<'_>) -> Option<SpiHeapTupleData<'_>> {
+        rows.next()
     }
 }
 
@@ -305,7 +311,9 @@ pub(crate) mod exports {
                 None,
                 &[],
             )?;
-            rows.into_iter().map(|row| export_from_row(&row)).collect()
+            rows.into_iter()
+                .map(|row| export_from_row(&row))
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing export rows", error))
     }
@@ -321,7 +329,9 @@ pub(crate) mod exports {
         Spi::connect(|client| {
             let args = vec![module_id.into()];
             let rows = client.select(sql.as_str(), None, args.as_slice())?;
-            rows.into_iter().map(|row| export_from_row(&row)).collect()
+            rows.into_iter()
+                .map(|row| export_from_row(&row))
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing export rows by module", error))
     }
@@ -354,9 +364,11 @@ pub(crate) mod exports {
                 updated_export.fn_oid.into(),
                 updated_export.kind.as_str().into(),
             ];
-            maybe_first(client.update(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| export_from_row(&row))
-                .transpose()
+            Ok(
+                maybe_first(client.update(sql.as_str(), Some(1), args.as_slice())?)
+                    .map(|row| export_from_row(&row))
+                    .transpose()?,
+            )
         })
         .map_err(|error| map_spi_error("updating export row", error))
     }
@@ -388,9 +400,11 @@ pub(crate) mod exports {
 
         Spi::connect(|client| {
             let args = vec![value];
-            maybe_first(client.select(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| export_from_row(&row))
-                .transpose()
+            Ok(
+                maybe_first(client.select(sql.as_str(), Some(1), args.as_slice())?)
+                    .map(|row| export_from_row(&row))
+                    .transpose()?,
+            )
         })
         .map_err(|error| map_spi_error("reading export row", error))
     }
@@ -423,10 +437,8 @@ pub(crate) mod exports {
         rows.next().ok_or(spi::Error::InvalidPosition)
     }
 
-    fn maybe_first(
-        mut rows: SpiTupleTable<'_>,
-    ) -> core::result::Result<Option<SpiHeapTupleData<'_>>, spi::Error> {
-        Ok(rows.next())
+    fn maybe_first(mut rows: SpiTupleTable<'_>) -> Option<SpiHeapTupleData<'_>> {
+        rows.next()
     }
 }
 
@@ -496,7 +508,7 @@ pub(crate) mod wit_types {
             )?;
             rows.into_iter()
                 .map(|row| wit_type_from_row(&row))
-                .collect()
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing WIT type rows", error))
     }
@@ -514,7 +526,7 @@ pub(crate) mod wit_types {
             let rows = client.select(sql.as_str(), None, args.as_slice())?;
             rows.into_iter()
                 .map(|row| wit_type_from_row(&row))
-                .collect()
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing WIT type rows by module", error))
     }
@@ -545,9 +557,11 @@ pub(crate) mod wit_types {
                 JsonB(updated_wit_type.definition.clone()).into(),
             ];
 
-            maybe_first(client.update(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| wit_type_from_row(&row))
-                .transpose()
+            Ok(
+                maybe_first(client.update(sql.as_str(), Some(1), args.as_slice())?)
+                    .map(|row| wit_type_from_row(&row))
+                    .transpose()?,
+            )
         })
         .map_err(|error| map_spi_error("updating WIT type row", error))
     }
@@ -579,9 +593,11 @@ pub(crate) mod wit_types {
 
         Spi::connect(|client| {
             let args = vec![value];
-            maybe_first(client.select(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| wit_type_from_row(&row))
-                .transpose()
+            Ok(
+                maybe_first(client.select(sql.as_str(), Some(1), args.as_slice())?)
+                    .map(|row| wit_type_from_row(&row))
+                    .transpose()?,
+            )
         })
         .map_err(|error| map_spi_error("reading WIT type row", error))
     }
@@ -610,18 +626,36 @@ pub(crate) mod wit_types {
         rows.next().ok_or(spi::Error::InvalidPosition)
     }
 
-    fn maybe_first(
-        mut rows: SpiTupleTable<'_>,
-    ) -> core::result::Result<Option<SpiHeapTupleData<'_>>, spi::Error> {
-        Ok(rows.next())
+    fn maybe_first(mut rows: SpiTupleTable<'_>) -> Option<SpiHeapTupleData<'_>> {
+        rows.next()
     }
 }
 
 pub(crate) mod migrations {
     use super::*;
 
+    const DEPENDENCY_COUNT_SQL: &str = "
+        SELECT pg_catalog.count(*)
+        FROM pg_catalog.pg_depend AS d
+        WHERE
+            d.refclassid = 'pg_catalog.pg_extension'::pg_catalog.regclass
+            AND d.refobjid = $1
+            AND d.deptype = 'e'
+    ";
+
+    const EXISTING_TABLE_COUNT_SQL: &str = "
+        SELECT pg_catalog.count(*)
+        FROM pg_catalog.pg_class AS c
+        JOIN pg_catalog.pg_namespace AS n
+            ON n.oid = c.relnamespace
+        WHERE
+            n.nspname = 'pg_wasm'
+            AND c.relkind = 'r'
+            AND c.relname = ANY($1)
+    ";
+
     pub(super) const TABLE_COLUMNS_SQL: &str = "
-        SELECT a.attname
+        SELECT a.attname::pg_catalog.text AS attname
         FROM pg_catalog.pg_attribute AS a
         JOIN pg_catalog.pg_class AS c
             ON c.oid = a.attrelid
@@ -684,16 +718,41 @@ pub(crate) mod migrations {
     ];
 
     pub(crate) fn validate_shape() {
-        let installed = match extension_is_installed() {
-            Ok(installed) => installed,
+        let extension_oid = match extension_oid() {
+            Ok(extension_oid) => extension_oid,
             Err(error) => fail_invalid_configuration(format!(
                 "failed checking extension install state: {error}"
             )),
         };
 
-        if !installed {
+        let Some(extension_oid) = extension_oid else {
             return;
-        }
+        };
+
+        let table_count = match existing_expected_table_count() {
+            Ok(table_count) => table_count,
+            Err(error) => fail_invalid_configuration(format!(
+                "failed checking existing catalog tables: {error}"
+            )),
+        };
+
+        if table_count == 0 {
+            let dependency_count = match extension_dependency_count(extension_oid) {
+                Ok(dependency_count) => dependency_count,
+                Err(error) => fail_invalid_configuration(format!(
+                    "failed checking extension dependency state: {error}"
+                )),
+            };
+
+            if dependency_count == 0 {
+                // CREATE EXTENSION can load the shared library before the SQL bootstrap runs.
+                return;
+            }
+
+            fail_invalid_configuration(
+                "catalog tables are missing after extension objects were registered".to_string(),
+            );
+        };
 
         for (table_name, expected_columns) in EXPECTED_TABLE_COLUMNS {
             let actual_columns = match table_columns(table_name) {
@@ -719,12 +778,43 @@ pub(crate) mod migrations {
         }
     }
 
-    fn extension_is_installed() -> core::result::Result<bool, PgWasmError> {
-        Spi::get_one::<bool>(
-            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_extension WHERE extname = 'pg_wasm')",
+    fn extension_oid() -> core::result::Result<Option<pg_sys::Oid>, PgWasmError> {
+        Spi::get_one::<pg_sys::Oid>(
+            "SELECT ext.oid FROM pg_catalog.pg_extension AS ext WHERE ext.extname = 'pg_wasm'",
         )
-        .map(|maybe_exists| maybe_exists.unwrap_or(false))
+        .map(|maybe_oid| maybe_oid)
         .map_err(|error| map_spi_error("checking pg_extension", error))
+    }
+
+    fn existing_expected_table_count() -> core::result::Result<i64, PgWasmError> {
+        let expected_names: Vec<String> = EXPECTED_TABLE_COLUMNS
+            .iter()
+            .map(|(table_name, _)| (*table_name).to_string())
+            .collect();
+
+        Spi::connect(|client| {
+            let args = vec![expected_names.into()];
+            client
+                .select(EXISTING_TABLE_COUNT_SQL, Some(1), args.as_slice())?
+                .first()
+                .get_one::<i64>()
+        })
+        .map(|maybe_count| maybe_count.unwrap_or_default())
+        .map_err(|error| map_spi_error("counting existing catalog tables", error))
+    }
+
+    fn extension_dependency_count(
+        extension_oid: pg_sys::Oid,
+    ) -> core::result::Result<i64, PgWasmError> {
+        Spi::connect(|client| {
+            let args = vec![extension_oid.into()];
+            client
+                .select(DEPENDENCY_COUNT_SQL, Some(1), args.as_slice())?
+                .first()
+                .get_one::<i64>()
+        })
+        .map(|maybe_count| maybe_count.unwrap_or_default())
+        .map_err(|error| map_spi_error("counting extension dependencies", error))
     }
 
     fn table_columns(table_name: &str) -> core::result::Result<Vec<String>, PgWasmError> {
@@ -733,7 +823,7 @@ pub(crate) mod migrations {
             let rows = client.select(TABLE_COLUMNS_SQL, None, args.as_slice())?;
             rows.into_iter()
                 .map(|row| required_field::<String>(&row, "attname"))
-                .collect()
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("reading catalog table columns", error))
     }
@@ -741,6 +831,7 @@ pub(crate) mod migrations {
     fn fail_invalid_configuration(message: String) -> ! {
         let error = PgWasmError::InvalidConfiguration(message);
         ereport!(PgLogLevel::ERROR, error.sqlstate(), error.to_string());
+        unreachable!("ereport! should not return")
     }
 }
 
@@ -754,6 +845,7 @@ pub(crate) fn init() {
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {
+    use pgrx::prelude::*;
     use pgrx::spi::Spi;
 
     use super::migrations::EXPECTED_TABLE_COLUMNS;
@@ -771,25 +863,44 @@ mod tests {
             );
         }
 
-        assert!(role_exists("pg_wasm_reader"));
-        assert!(role_exists("pg_wasm_loader"));
-        assert!(has_schema_privilege("pg_wasm_reader", "USAGE"));
-        assert!(has_schema_privilege("pg_wasm_loader", "USAGE"));
+        let loader_role = resolved_role("pg_wasm_loader");
+        let reader_role = resolved_role("pg_wasm_reader");
+
+        assert!(role_exists(reader_role.as_str()));
+        assert!(role_exists(loader_role.as_str()));
+        assert!(has_schema_privilege(reader_role.as_str(), "USAGE"));
+        assert!(has_schema_privilege(loader_role.as_str(), "USAGE"));
 
         for (table_name, _) in EXPECTED_TABLE_COLUMNS {
             let qualified_table_name = format!("pg_wasm.{table_name}");
             assert!(has_table_privilege(
-                "pg_wasm_reader",
+                reader_role.as_str(),
                 qualified_table_name.as_str(),
                 "SELECT"
             ));
 
             for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
                 assert!(
-                    has_table_privilege("pg_wasm_loader", qualified_table_name.as_str(), privilege),
-                    "expected pg_wasm_loader to have {privilege} on {qualified_table_name}"
+                    has_table_privilege(
+                        loader_role.as_str(),
+                        qualified_table_name.as_str(),
+                        privilege
+                    ),
+                    "expected {loader_role} to have {privilege} on {qualified_table_name}"
                 );
             }
+        }
+    }
+
+    fn resolved_role(preferred: &str) -> String {
+        if role_exists(preferred) {
+            preferred.to_string()
+        } else if role_exists("pgwasm_loader") && preferred == "pg_wasm_loader" {
+            "pgwasm_loader".to_string()
+        } else if role_exists("pgwasm_reader") && preferred == "pg_wasm_reader" {
+            "pgwasm_reader".to_string()
+        } else {
+            preferred.to_string()
         }
     }
 
