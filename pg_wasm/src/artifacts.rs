@@ -7,7 +7,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, ErrorKind, Write as _},
     path::{Path, PathBuf},
-    sync::{Mutex, MutexGuard, OnceLock},
+    sync::OnceLock,
 };
 
 use crate::errors::PgWasmError;
@@ -19,17 +19,6 @@ pub(crate) const MODULE_WASM_FILENAME: &str = "module.wasm";
 pub(crate) const WORLD_WIT_FILENAME: &str = "world.wit";
 
 static DATA_DIR_CACHE: OnceLock<PathBuf> = OnceLock::new();
-static TEST_DATA_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
-
-#[allow(dead_code)]
-pub(crate) fn set_data_dir_for_test(path: impl Into<PathBuf>) {
-    *lock_test_data_dir_override() = Some(path.into());
-}
-
-#[allow(dead_code)]
-pub(crate) fn clear_data_dir_for_test() {
-    *lock_test_data_dir_override() = None;
-}
 
 pub(crate) fn artifacts_root_dir() -> io::Result<PathBuf> {
     Ok(resolve_data_dir()?.join(ARTIFACTS_DIRNAME))
@@ -179,59 +168,53 @@ pub(crate) fn prune_stale(active_ids: &BTreeSet<u64>) -> io::Result<usize> {
     Ok(pruned)
 }
 
-fn lock_test_data_dir_override() -> MutexGuard<'static, Option<PathBuf>> {
-    match TEST_DATA_DIR_OVERRIDE.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
-#[cfg(not(test))]
 fn resolve_data_dir() -> io::Result<PathBuf> {
-    if let Some(test_data_dir) = lock_test_data_dir_override().clone() {
-        return Ok(test_data_dir);
+    #[cfg(test)]
+    {
+        use self::tests::lock_test_data_dir_override;
+
+        if let Some(test_data_dir) = lock_test_data_dir_override().clone() {
+            return Ok(test_data_dir);
+        }
     }
+
     if let Some(cached_data_dir) = DATA_DIR_CACHE.get() {
         return Ok(cached_data_dir.clone());
     }
 
-    // SAFETY: PostgreSQL owns DataDir and keeps it valid for backend lifetime.
-    let data_dir_ptr = unsafe { pgrx::pg_sys::DataDir };
-    if data_dir_ptr.is_null() {
-        return Err(io::Error::new(
+    #[cfg(not(test))]
+    {
+        // SAFETY: PostgreSQL owns DataDir and keeps it valid for backend lifetime.
+        let data_dir_ptr = unsafe { pgrx::pg_sys::DataDir };
+        if data_dir_ptr.is_null() {
+            return Err(io::Error::new(
+                ErrorKind::NotFound,
+                "PostgreSQL DataDir is not initialized",
+            ));
+        }
+
+        // SAFETY: DataDir is a NUL-terminated C string when backend is initialized.
+        let data_dir = unsafe { std::ffi::CStr::from_ptr(data_dir_ptr.cast()) }
+            .to_str()
+            .map_err(|error| {
+                io::Error::new(
+                    ErrorKind::InvalidData,
+                    format!("PostgreSQL DataDir is not valid UTF-8: {error}"),
+                )
+            })?;
+
+        let data_dir = PathBuf::from(data_dir);
+        let _ = DATA_DIR_CACHE.set(data_dir.clone());
+        return Ok(data_dir);
+    }
+
+    #[cfg(test)]
+    {
+        Err(io::Error::new(
             ErrorKind::NotFound,
-            "PostgreSQL DataDir is not initialized",
-        ));
+            "PostgreSQL DataDir is unavailable in host tests; set test data dir override first",
+        ))
     }
-
-    // SAFETY: DataDir is a NUL-terminated C string when backend is initialized.
-    let data_dir = unsafe { std::ffi::CStr::from_ptr(data_dir_ptr.cast()) }
-        .to_str()
-        .map_err(|error| {
-            io::Error::new(
-                ErrorKind::InvalidData,
-                format!("PostgreSQL DataDir is not valid UTF-8: {error}"),
-            )
-        })?;
-
-    let data_dir = PathBuf::from(data_dir);
-    let _ = DATA_DIR_CACHE.set(data_dir.clone());
-    Ok(data_dir)
-}
-
-#[cfg(test)]
-fn resolve_data_dir() -> io::Result<PathBuf> {
-    if let Some(test_data_dir) = lock_test_data_dir_override().clone() {
-        return Ok(test_data_dir);
-    }
-    if let Some(cached_data_dir) = DATA_DIR_CACHE.get() {
-        return Ok(cached_data_dir.clone());
-    }
-
-    Err(io::Error::new(
-        ErrorKind::NotFound,
-        "PostgreSQL DataDir is unavailable in host tests; call set_data_dir_for_test()",
-    ))
 }
 
 fn temp_sibling_path(path: &Path) -> io::Result<PathBuf> {
@@ -328,9 +311,8 @@ mod tests {
     };
 
     use super::{
-        CHECKSUM_FILENAME, MODULE_WASM_FILENAME, artifacts_root_dir, clear_data_dir_for_test,
-        ensure_module_dir, module_dir_name, prune_stale, set_data_dir_for_test, sha256_bytes,
-        verify_checksum, write_atomic, write_checksum,
+        CHECKSUM_FILENAME, MODULE_WASM_FILENAME, artifacts_root_dir, ensure_module_dir,
+        module_dir_name, prune_stale, sha256_bytes, verify_checksum, write_atomic, write_checksum,
     };
 
     struct TestDir {
@@ -361,6 +343,7 @@ mod tests {
     }
 
     struct DataDirGuard;
+    static TEST_DATA_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
     static TEST_DATA_DIR_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -382,16 +365,23 @@ mod tests {
         TestDataDirLockGuard::lock()
     }
 
+    pub(super) fn lock_test_data_dir_override() -> MutexGuard<'static, Option<PathBuf>> {
+        match TEST_DATA_DIR_OVERRIDE.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     impl DataDirGuard {
         fn new(path: PathBuf) -> Self {
-            set_data_dir_for_test(path);
+            *lock_test_data_dir_override() = Some(path);
             Self
         }
     }
 
     impl Drop for DataDirGuard {
         fn drop(&mut self) {
-            clear_data_dir_for_test();
+            *lock_test_data_dir_override() = None;
         }
     }
 
