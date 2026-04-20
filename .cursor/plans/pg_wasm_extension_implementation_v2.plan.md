@@ -32,7 +32,7 @@ todos:
     status: pending
   - id: artifacts-layout
     content: Implement `artifacts.rs` for `$PGDATA/pg_wasm/<module_id>/` (module.wasm, module.cwasm, world.wit). Include atomic write (temp + rename), directory fsync, checksum verification (sha256), and a `prune_stale` helper for orphaned dirs.
-    status: pending
+    status: completed
   - id: policy-resolve
     content: Define `config::{LoadOptions, PolicyOverrides, Limits}` and `policy::{EffectivePolicy, resolve}`. Enforce narrowing semantics (overrides can only deny/tighten). Cover with host-only unit tests for every combination.
     status: pending
