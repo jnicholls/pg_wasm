@@ -8,6 +8,8 @@ use serde_json::Value;
 
 use crate::errors::{PgWasmError, Result};
 
+const CATALOG_SCHEMA: &str = "wasm";
+
 pgrx::extension_sql_file!(
     "../sql/pg_wasm--0.1.0.sql",
     name = "catalog_schema",
@@ -71,7 +73,7 @@ pub(crate) mod modules {
 
     pub(crate) fn insert(new_module: &NewModule) -> Result<ModuleRow> {
         let sql = format!(
-            "INSERT INTO pg_wasm.modules (name, abi, digest, wasm_sha256, origin, artifact_path, wit_world, policy, limits, generation)
+            "INSERT INTO {CATALOG_SCHEMA}.modules (name, abi, digest, wasm_sha256, origin, artifact_path, wit_world, policy, limits, generation)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING {RETURNING_COLUMNS}"
         );
@@ -109,8 +111,10 @@ pub(crate) mod modules {
     pub(crate) fn list() -> Result<Vec<ModuleRow>> {
         Spi::connect(|client| {
             let rows = client.select(
-                format!("SELECT {RETURNING_COLUMNS} FROM pg_wasm.modules ORDER BY module_id")
-                    .as_str(),
+                format!(
+                    "SELECT {RETURNING_COLUMNS} FROM {CATALOG_SCHEMA}.modules ORDER BY module_id"
+                )
+                .as_str(),
                 None,
                 &[],
             )?;
@@ -123,7 +127,7 @@ pub(crate) mod modules {
 
     pub(crate) fn update(module_id: i64, updated_module: &NewModule) -> Result<Option<ModuleRow>> {
         let sql = format!(
-            "UPDATE pg_wasm.modules
+            "UPDATE {CATALOG_SCHEMA}.modules
              SET
                  name = $2,
                  abi = $3,
@@ -166,7 +170,7 @@ pub(crate) mod modules {
             let args = vec![module_id.into()];
             let deleted = client
                 .update(
-                    "DELETE FROM pg_wasm.modules WHERE module_id = $1",
+                    format!("DELETE FROM {CATALOG_SCHEMA}.modules WHERE module_id = $1").as_str(),
                     None,
                     args.as_slice(),
                 )?
@@ -182,7 +186,7 @@ pub(crate) mod modules {
     ) -> Result<Option<ModuleRow>> {
         let sql = format!(
             "SELECT {RETURNING_COLUMNS}
-             FROM pg_wasm.modules
+             FROM {CATALOG_SCHEMA}.modules
              WHERE {predicate}"
         );
 
@@ -270,7 +274,7 @@ pub(crate) mod exports {
 
     pub(crate) fn insert(new_export: &NewExport) -> Result<ExportRow> {
         let sql = format!(
-            "INSERT INTO pg_wasm.exports (module_id, wasm_name, sql_name, signature, arg_types, ret_type, fn_oid, kind)
+            "INSERT INTO {CATALOG_SCHEMA}.exports (module_id, wasm_name, sql_name, signature, arg_types, ret_type, fn_oid, kind)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING {RETURNING_COLUMNS}"
         );
@@ -306,8 +310,10 @@ pub(crate) mod exports {
     pub(crate) fn list() -> Result<Vec<ExportRow>> {
         Spi::connect(|client| {
             let rows = client.select(
-                format!("SELECT {RETURNING_COLUMNS} FROM pg_wasm.exports ORDER BY export_id")
-                    .as_str(),
+                format!(
+                    "SELECT {RETURNING_COLUMNS} FROM {CATALOG_SCHEMA}.exports ORDER BY export_id"
+                )
+                .as_str(),
                 None,
                 &[],
             )?;
@@ -321,7 +327,7 @@ pub(crate) mod exports {
     pub(crate) fn list_by_module(module_id: i64) -> Result<Vec<ExportRow>> {
         let sql = format!(
             "SELECT {RETURNING_COLUMNS}
-             FROM pg_wasm.exports
+             FROM {CATALOG_SCHEMA}.exports
              WHERE module_id = $1
              ORDER BY export_id"
         );
@@ -338,7 +344,7 @@ pub(crate) mod exports {
 
     pub(crate) fn update(export_id: i64, updated_export: &NewExport) -> Result<Option<ExportRow>> {
         let sql = format!(
-            "UPDATE pg_wasm.exports
+            "UPDATE {CATALOG_SCHEMA}.exports
              SET
                  module_id = $2,
                  wasm_name = $3,
@@ -375,7 +381,7 @@ pub(crate) mod exports {
             let args = vec![export_id.into()];
             let deleted = client
                 .update(
-                    "DELETE FROM pg_wasm.exports WHERE export_id = $1",
+                    format!("DELETE FROM {CATALOG_SCHEMA}.exports WHERE export_id = $1").as_str(),
                     None,
                     args.as_slice(),
                 )?
@@ -391,7 +397,7 @@ pub(crate) mod exports {
     ) -> Result<Option<ExportRow>> {
         let sql = format!(
             "SELECT {RETURNING_COLUMNS}
-             FROM pg_wasm.exports
+             FROM {CATALOG_SCHEMA}.exports
              WHERE {predicate}"
         );
 
@@ -468,7 +474,7 @@ pub(crate) mod wit_types {
 
     pub(crate) fn insert(new_wit_type: &NewWitType) -> Result<WitTypeRow> {
         let sql = format!(
-            "INSERT INTO pg_wasm.wit_types (module_id, wit_name, pg_type_oid, kind, definition)
+            "INSERT INTO {CATALOG_SCHEMA}.wit_types (module_id, wit_name, pg_type_oid, kind, definition)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING {RETURNING_COLUMNS}"
         );
@@ -497,7 +503,7 @@ pub(crate) mod wit_types {
     pub(crate) fn list() -> Result<Vec<WitTypeRow>> {
         Spi::connect(|client| {
             let rows = client.select(
-                format!("SELECT {RETURNING_COLUMNS} FROM pg_wasm.wit_types ORDER BY wit_type_id")
+                format!("SELECT {RETURNING_COLUMNS} FROM {CATALOG_SCHEMA}.wit_types ORDER BY wit_type_id")
                     .as_str(),
                 None,
                 &[],
@@ -512,7 +518,7 @@ pub(crate) mod wit_types {
     pub(crate) fn list_by_module(module_id: i64) -> Result<Vec<WitTypeRow>> {
         let sql = format!(
             "SELECT {RETURNING_COLUMNS}
-             FROM pg_wasm.wit_types
+             FROM {CATALOG_SCHEMA}.wit_types
              WHERE module_id = $1
              ORDER BY wit_type_id"
         );
@@ -532,7 +538,7 @@ pub(crate) mod wit_types {
         updated_wit_type: &NewWitType,
     ) -> Result<Option<WitTypeRow>> {
         let sql = format!(
-            "UPDATE pg_wasm.wit_types
+            "UPDATE {CATALOG_SCHEMA}.wit_types
              SET
                  module_id = $2,
                  wit_name = $3,
@@ -564,7 +570,8 @@ pub(crate) mod wit_types {
             let args = vec![wit_type_id.into()];
             let deleted = client
                 .update(
-                    "DELETE FROM pg_wasm.wit_types WHERE wit_type_id = $1",
+                    format!("DELETE FROM {CATALOG_SCHEMA}.wit_types WHERE wit_type_id = $1")
+                        .as_str(),
                     None,
                     args.as_slice(),
                 )?
@@ -580,7 +587,7 @@ pub(crate) mod wit_types {
     ) -> Result<Option<WitTypeRow>> {
         let sql = format!(
             "SELECT {RETURNING_COLUMNS}
-             FROM pg_wasm.wit_types
+             FROM {CATALOG_SCHEMA}.wit_types
              WHERE {predicate}"
         );
 
@@ -630,7 +637,7 @@ pub(crate) mod migrations {
         SELECT c.column_name AS attname
         FROM information_schema.columns AS c
         WHERE
-            c.table_schema = 'pg_wasm'
+            c.table_schema = 'wasm'
             AND c.table_name = $1
         ORDER BY c.ordinal_position
     ";
@@ -704,13 +711,13 @@ pub(crate) mod migrations {
             let actual_columns = match table_columns(table_name) {
                 Ok(columns) => columns,
                 Err(error) => fail_invalid_configuration(format!(
-                    "failed validating table pg_wasm.{table_name}: {error}"
+                    "failed validating table {CATALOG_SCHEMA}.{table_name}: {error}"
                 )),
             };
 
             if actual_columns.is_empty() {
                 fail_invalid_configuration(format!(
-                    "catalog table pg_wasm.{table_name} is missing or has no visible columns"
+                    "catalog table {CATALOG_SCHEMA}.{table_name} is missing or has no visible columns"
                 ));
             }
 
@@ -718,7 +725,7 @@ pub(crate) mod migrations {
             let expected_set: BTreeSet<&str> = expected_columns.iter().copied().collect();
             if actual_set != expected_set {
                 fail_invalid_configuration(format!(
-                    "catalog table pg_wasm.{table_name} has unexpected columns: actual={actual_columns:?}, expected={expected_columns:?}"
+                    "catalog table {CATALOG_SCHEMA}.{table_name} has unexpected columns: actual={actual_columns:?}, expected={expected_columns:?}"
                 ));
             }
         }
@@ -739,7 +746,7 @@ pub(crate) mod migrations {
              FROM pg_catalog.pg_class AS c
              JOIN pg_catalog.pg_namespace AS n
                ON n.oid = c.relnamespace
-             WHERE n.nspname = 'pg_wasm'
+             WHERE n.nspname = 'wasm'
                AND c.relkind IN ('r', 'p')
                AND c.relname = ANY(ARRAY['modules', 'exports', 'wit_types', 'dependencies'])",
         ) {
@@ -789,7 +796,7 @@ mod tests {
             let actual_columns = table_columns(table_name);
             assert_eq!(
                 actual_columns, *expected_columns,
-                "unexpected column shape for pg_wasm.{table_name}"
+                "unexpected column shape for {CATALOG_SCHEMA}.{table_name}"
             );
         }
 
@@ -799,7 +806,7 @@ mod tests {
         assert!(has_schema_privilege("pg_wasm_loader", "USAGE"));
 
         for (table_name, _) in EXPECTED_TABLE_COLUMNS {
-            let qualified_table_name = format!("pg_wasm.{table_name}");
+            let qualified_table_name = format!("{CATALOG_SCHEMA}.{table_name}");
             assert!(has_table_privilege(
                 "pg_wasm_reader",
                 qualified_table_name.as_str(),
@@ -838,7 +845,7 @@ mod tests {
 
     fn has_schema_privilege(role_name: &str, privilege: &str) -> bool {
         Spi::get_one_with_args(
-            "SELECT pg_catalog.has_schema_privilege($1, 'pg_wasm', $2)",
+            "SELECT pg_catalog.has_schema_privilege($1, 'wasm', $2)",
             &[role_name.into(), privilege.into()],
         )
         .unwrap()

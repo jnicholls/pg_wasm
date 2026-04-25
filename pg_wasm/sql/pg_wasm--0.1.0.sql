@@ -64,8 +64,8 @@ BEGIN
 END
 $$;
 
-GRANT USAGE ON SCHEMA pg_wasm TO pg_wasm_loader;
-GRANT USAGE ON SCHEMA pg_wasm TO pg_wasm_reader;
+GRANT USAGE ON SCHEMA @extschema@ TO pg_wasm_loader;
+GRANT USAGE ON SCHEMA @extschema@ TO pg_wasm_reader;
 
 GRANT SELECT ON TABLE
     @extschema@.dependencies,

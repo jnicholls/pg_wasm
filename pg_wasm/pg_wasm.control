@@ -2,6 +2,6 @@ comment = 'pg_wasm:  Created by pgrx'
 default_version = '@CARGO_VERSION@'
 module_pathname = 'pg_wasm'
 relocatable = false
-schema = 'pg_wasm'
+schema = 'wasm'
 superuser = true
 trusted = false
