@@ -634,7 +634,7 @@ pub(crate) mod migrations {
     use super::*;
 
     pub(super) const TABLE_COLUMNS_SQL: &str = "
-        SELECT c.column_name AS attname
+        SELECT c.column_name::text AS attname
         FROM information_schema.columns AS c
         WHERE
             c.table_schema = 'wasm'
