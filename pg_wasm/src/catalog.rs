@@ -108,7 +108,9 @@ pub(crate) mod modules {
                 None,
                 &[],
             )?;
-            rows.into_iter().map(|row| module_from_row(&row)).collect()
+            rows.into_iter()
+                .map(|row| module_from_row(&row))
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing module rows", error))
     }
@@ -148,8 +150,7 @@ pub(crate) mod modules {
             ];
 
             maybe_first(client.update(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| module_from_row(&row))
-                .transpose()
+                .and_then(|maybe_row| maybe_row.map(|row| module_from_row(&row)).transpose())
         })
         .map_err(|error| map_spi_error("updating module row", error))
     }
@@ -182,8 +183,7 @@ pub(crate) mod modules {
         Spi::connect(|client| {
             let args = vec![value];
             maybe_first(client.select(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| module_from_row(&row))
-                .transpose()
+                .and_then(|maybe_row| maybe_row.map(|row| module_from_row(&row)).transpose())
         })
         .map_err(|error| map_spi_error("reading module row", error))
     }
@@ -305,7 +305,9 @@ pub(crate) mod exports {
                 None,
                 &[],
             )?;
-            rows.into_iter().map(|row| export_from_row(&row)).collect()
+            rows.into_iter()
+                .map(|row| export_from_row(&row))
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing export rows", error))
     }
@@ -321,7 +323,9 @@ pub(crate) mod exports {
         Spi::connect(|client| {
             let args = vec![module_id.into()];
             let rows = client.select(sql.as_str(), None, args.as_slice())?;
-            rows.into_iter().map(|row| export_from_row(&row)).collect()
+            rows.into_iter()
+                .map(|row| export_from_row(&row))
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing export rows by module", error))
     }
@@ -355,8 +359,7 @@ pub(crate) mod exports {
                 updated_export.kind.as_str().into(),
             ];
             maybe_first(client.update(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| export_from_row(&row))
-                .transpose()
+                .and_then(|maybe_row| maybe_row.map(|row| export_from_row(&row)).transpose())
         })
         .map_err(|error| map_spi_error("updating export row", error))
     }
@@ -389,8 +392,7 @@ pub(crate) mod exports {
         Spi::connect(|client| {
             let args = vec![value];
             maybe_first(client.select(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| export_from_row(&row))
-                .transpose()
+                .and_then(|maybe_row| maybe_row.map(|row| export_from_row(&row)).transpose())
         })
         .map_err(|error| map_spi_error("reading export row", error))
     }
@@ -496,7 +498,7 @@ pub(crate) mod wit_types {
             )?;
             rows.into_iter()
                 .map(|row| wit_type_from_row(&row))
-                .collect()
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing WIT type rows", error))
     }
@@ -514,7 +516,7 @@ pub(crate) mod wit_types {
             let rows = client.select(sql.as_str(), None, args.as_slice())?;
             rows.into_iter()
                 .map(|row| wit_type_from_row(&row))
-                .collect()
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("listing WIT type rows by module", error))
     }
@@ -546,8 +548,7 @@ pub(crate) mod wit_types {
             ];
 
             maybe_first(client.update(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| wit_type_from_row(&row))
-                .transpose()
+                .and_then(|maybe_row| maybe_row.map(|row| wit_type_from_row(&row)).transpose())
         })
         .map_err(|error| map_spi_error("updating WIT type row", error))
     }
@@ -580,8 +581,7 @@ pub(crate) mod wit_types {
         Spi::connect(|client| {
             let args = vec![value];
             maybe_first(client.select(sql.as_str(), Some(1), args.as_slice())?)
-                .map(|row| wit_type_from_row(&row))
-                .transpose()
+                .and_then(|maybe_row| maybe_row.map(|row| wit_type_from_row(&row)).transpose())
         })
         .map_err(|error| map_spi_error("reading WIT type row", error))
     }
@@ -733,7 +733,7 @@ pub(crate) mod migrations {
             let rows = client.select(TABLE_COLUMNS_SQL, None, args.as_slice())?;
             rows.into_iter()
                 .map(|row| required_field::<String>(&row, "attname"))
-                .collect()
+                .collect::<core::result::Result<Vec<_>, spi::Error>>()
         })
         .map_err(|error| map_spi_error("reading catalog table columns", error))
     }
@@ -741,6 +741,7 @@ pub(crate) mod migrations {
     fn fail_invalid_configuration(message: String) -> ! {
         let error = PgWasmError::InvalidConfiguration(message);
         ereport!(PgLogLevel::ERROR, error.sqlstate(), error.to_string());
+        unreachable!("ereport! should not return");
     }
 }
 
