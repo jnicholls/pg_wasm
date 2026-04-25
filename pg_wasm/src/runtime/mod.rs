@@ -1,4 +1,4 @@
-//! Wasmtime engine and epoch-ticker runtime primitives.
+//! Wasmtime engine, epoch ticker, and runtime subsystems.
 
 use std::ffi::c_int;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,52 +11,9 @@ use wasmtime::EngineWeak;
 
 use crate::guc;
 
-pub(crate) mod engine {
-    use std::sync::OnceLock;
-
-    use wasmtime::{Cache, Config, Engine};
-
-    use crate::errors::PgWasmError;
-    use crate::guc;
-
-    static SHARED_ENGINE: OnceLock<Engine> = OnceLock::new();
-
-    /// Returns the lazily-initialized backend-local Wasmtime engine.
-    pub(crate) fn shared_engine() -> &'static Engine {
-        try_shared_engine().expect("failed to initialize shared Wasmtime engine")
-    }
-
-    /// Fallible shared engine accessor to avoid panics in call sites that can recover.
-    pub(crate) fn try_shared_engine() -> Result<&'static Engine, PgWasmError> {
-        if let Some(engine) = SHARED_ENGINE.get() {
-            return Ok(engine);
-        }
-
-        let engine = build_engine(guc::FUEL_ENABLED.get())?;
-        let _ = SHARED_ENGINE.set(engine);
-
-        SHARED_ENGINE.get().ok_or_else(|| {
-            PgWasmError::Internal("shared Wasmtime engine failed to initialize".to_string())
-        })
-    }
-
-    pub(super) fn build_engine(fuel_enabled: bool) -> Result<Engine, PgWasmError> {
-        let mut config = Config::new();
-        configure_engine(&mut config, fuel_enabled);
-
-        Engine::new(&config).map_err(|error| {
-            PgWasmError::Internal(format!("failed to construct Wasmtime engine: {error}"))
-        })
-    }
-
-    pub(super) fn configure_engine(config: &mut Config, fuel_enabled: bool) {
-        config.wasm_component_model(true);
-        config.epoch_interruption(true);
-        config.consume_fuel(fuel_enabled);
-        config.cache(None::<Cache>);
-        config.parallel_compilation(false);
-    }
-}
+pub(crate) mod component;
+pub(crate) mod engine;
+pub(crate) mod pool;
 
 static EPOCH_TICKER: OnceLock<EpochTickerState> = OnceLock::new();
 static EPOCH_TICKER_EXIT_HOOK: OnceLock<()> = OnceLock::new();
@@ -218,14 +175,127 @@ mod host_tests {
             .join()
             .expect("ticker thread should join after weak engine expires");
     }
+
+    #[test]
+    fn component_precompile_round_trip() {
+        use std::sync::Arc;
+
+        use wasmtime::component::Component;
+        use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
+
+        let engine = engine::build_engine(false).expect("engine");
+        let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        let mut resolve = wit_parser::Resolve::default();
+        let wit = "package test:pool; world w { }";
+        let pkg = resolve.push_str("fixture.wit", wit).expect("wit parses");
+        let world_id = resolve.select_world(&[pkg], Some("w")).expect("world");
+        embed_component_metadata(&mut module, &resolve, world_id, StringEncoding::UTF8)
+            .expect("embed");
+        let component_bytes = ComponentEncoder::default()
+            .module(&module)
+            .expect("encode")
+            .validate(true)
+            .encode()
+            .expect("component");
+
+        let component = Component::from_binary(&engine, &component_bytes).expect("compile");
+        let tmp = tempfile::NamedTempFile::new().expect("temp");
+        let hash = super::component::precompile_to(&engine, &component_bytes, tmp.path())
+            .expect("precompile");
+        let loaded = unsafe {
+            super::component::load_precompiled(&engine, tmp.path(), &hash).expect("load")
+        };
+        assert_eq!(component.serialize().unwrap(), loaded.serialize().unwrap());
+        let _ = Arc::new(component);
+    }
+
+    #[test]
+    fn pool_capacity_blocks_waiters() {
+        use std::sync::Arc;
+
+        use wasmtime::component::Component;
+        use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
+
+        use crate::policy::GucSnapshot;
+
+        let engine = engine::build_engine(false).expect("engine");
+        let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        let mut resolve = wit_parser::Resolve::default();
+        let wit = "package test:pool2; world w2 { }";
+        let pkg = resolve.push_str("fixture.wit", wit).expect("wit");
+        let world_id = resolve.select_world(&[pkg], Some("w2")).expect("world");
+        embed_component_metadata(&mut module, &resolve, world_id, StringEncoding::UTF8).unwrap();
+        let component_bytes = ComponentEncoder::default()
+            .module(&module)
+            .unwrap()
+            .validate(true)
+            .encode()
+            .unwrap();
+        let component =
+            Arc::new(Component::from_binary(&engine, &component_bytes).expect("component"));
+        let guc = GucSnapshot::from_gucs();
+        let policy = crate::policy::resolve(&guc, None, None).expect("policy");
+        let mut narrow = policy.clone();
+        narrow.instances_per_module = 1;
+        let linker = super::component::build_linker(&engine, &narrow).expect("linker");
+        let pool = super::pool::InstancePool::new(99, Arc::clone(&component), linker, &narrow)
+            .expect("pool");
+
+        let a = pool.acquire(&engine, &narrow).expect("a");
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let b_barrier = Arc::clone(&barrier);
+        let b_engine = engine.clone();
+        let b_pool = super::pool::InstancePool {
+            inner: Arc::clone(&pool.inner),
+        };
+        let b_policy = narrow.clone();
+        let handle = std::thread::spawn(move || {
+            b_barrier.wait();
+            b_pool.acquire(&b_engine, &b_policy)
+        });
+        barrier.wait();
+        std::thread::sleep(Duration::from_millis(50));
+        a.release();
+        handle.join().expect("join").expect("b acquire");
+    }
 }
 
 #[cfg(feature = "pg_test")]
 #[pgrx::pg_schema]
 mod tests {
-    use pgrx::prelude::*;
+    use std::sync::Arc;
 
+    use pgrx::prelude::*;
+    use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
+    use wit_parser::Resolve;
+
+    use crate::artifacts;
+
+    use super::component;
     use super::engine;
+
+    #[pg_test]
+    fn precompile_writes_under_pgdata() {
+        let engine = engine::shared_engine();
+        let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        let mut resolve = Resolve::default();
+        let wit = "package test:art; world w { }";
+        let pkg = resolve.push_str("fixture.wit", wit).unwrap();
+        let world_id = resolve.select_world(&[pkg], Some("w")).unwrap();
+        embed_component_metadata(&mut module, &resolve, world_id, StringEncoding::UTF8).unwrap();
+        let bytes = ComponentEncoder::default()
+            .module(&module)
+            .unwrap()
+            .validate(true)
+            .encode()
+            .unwrap();
+
+        let dir = artifacts::ensure_module_dir(42).expect("module dir");
+        let path = dir.join("smoke.cwasm");
+        let hash = component::precompile_to(engine, &bytes, &path).expect("precompile");
+        let comp = unsafe { component::load_precompiled(engine, &path, &hash).expect("load") };
+        let _ = Arc::new(comp);
+    }
 
     #[pg_test]
     fn shared_engine_returns_same_pointer_within_backend() {
