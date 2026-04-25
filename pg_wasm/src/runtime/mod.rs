@@ -12,6 +12,7 @@ use wasmtime::EngineWeak;
 use crate::guc;
 
 pub(crate) mod component;
+pub(crate) mod core;
 pub(crate) mod engine;
 pub(crate) mod pool;
 
