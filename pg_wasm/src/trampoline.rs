@@ -4,11 +4,12 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use pgrx::notice;
 use pgrx::pg_guard;
-use pgrx::pg_sys::{Datum, FunctionCallInfo, Oid};
+use pgrx::pg_sys::{Datum, FunctionCallInfo, Oid, Pg_finfo_record};
 
 use crate::registry;
 
 #[pg_guard]
+#[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn pg_wasm_udf_trampoline(fcinfo: FunctionCallInfo) -> Datum {
     let result = catch_unwind(AssertUnwindSafe(|| unsafe { trampoline_impl(fcinfo) }));
 
@@ -20,6 +21,13 @@ pub unsafe extern "C-unwind" fn pg_wasm_udf_trampoline(fcinfo: FunctionCallInfo)
             Datum::from(0_i32)
         }
     }
+}
+
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub extern "C" fn pg_finfo_pg_wasm_udf_trampoline() -> &'static Pg_finfo_record {
+    const V1_API: Pg_finfo_record = Pg_finfo_record { api_version: 1 };
+    &V1_API
 }
 
 unsafe fn trampoline_impl(fcinfo: FunctionCallInfo) -> Datum {
