@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use wasmtime::component::{Component, Linker, ResourceTable};
-use wasmtime::{Engine, Precompiled};
+use wasmtime::{Engine, Precompiled, StoreLimits};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::WasiHttpCtx;
 use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
@@ -17,6 +17,8 @@ use crate::policy::EffectivePolicy;
 /// Per-`Store` state for component instantiation: WASI + shared resource table + optional HTTP.
 pub(crate) struct StoreCtx {
     http: WasiHttpCtx,
+    /// Per-invocation store limits; filled by the trampoline before each call.
+    pub(crate) limits: StoreLimits,
     table: ResourceTable,
     wasi: WasiCtx,
 }
@@ -154,6 +156,7 @@ pub(crate) fn build_store_ctx(policy: &EffectivePolicy) -> Result<StoreCtx, PgWa
     let wasi = builder.build();
     Ok(StoreCtx {
         http: WasiHttpCtx::new(),
+        limits: StoreLimits::default(),
         table: ResourceTable::new(),
         wasi,
     })
