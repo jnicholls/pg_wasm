@@ -38,22 +38,18 @@ pub(crate) fn ensure_module_dir(module_id: u64) -> io::Result<PathBuf> {
     Ok(module_dir)
 }
 
-#[allow(dead_code)]
 pub(crate) fn module_wasm_path(module_id: u64) -> io::Result<PathBuf> {
     Ok(module_dir(module_id)?.join(MODULE_WASM_FILENAME))
 }
 
-#[allow(dead_code)]
 pub(crate) fn module_cwasm_path(module_id: u64) -> io::Result<PathBuf> {
     Ok(module_dir(module_id)?.join(MODULE_CWASM_FILENAME))
 }
 
-#[allow(dead_code)]
 pub(crate) fn world_wit_path(module_id: u64) -> io::Result<PathBuf> {
     Ok(module_dir(module_id)?.join(WORLD_WIT_FILENAME))
 }
 
-#[allow(dead_code)]
 pub(crate) fn write_module_wasm(module_id: u64, bytes: &[u8]) -> io::Result<PathBuf> {
     let module_dir = ensure_module_dir(module_id)?;
     let path = module_dir.join(MODULE_WASM_FILENAME);
@@ -61,7 +57,6 @@ pub(crate) fn write_module_wasm(module_id: u64, bytes: &[u8]) -> io::Result<Path
     Ok(path)
 }
 
-#[allow(dead_code)]
 pub(crate) fn write_module_cwasm(module_id: u64, bytes: &[u8]) -> io::Result<PathBuf> {
     let module_dir = ensure_module_dir(module_id)?;
     let path = module_dir.join(MODULE_CWASM_FILENAME);
@@ -69,7 +64,6 @@ pub(crate) fn write_module_cwasm(module_id: u64, bytes: &[u8]) -> io::Result<Pat
     Ok(path)
 }
 
-#[allow(dead_code)]
 pub(crate) fn write_world_wit(module_id: u64, world_wit: &str) -> io::Result<PathBuf> {
     let module_dir = ensure_module_dir(module_id)?;
     let path = module_dir.join(WORLD_WIT_FILENAME);
@@ -205,7 +199,7 @@ fn resolve_data_dir() -> io::Result<PathBuf> {
 
         let data_dir = PathBuf::from(data_dir);
         let _ = DATA_DIR_CACHE.set(data_dir.clone());
-        return Ok(data_dir);
+        Ok(data_dir)
     }
 
     #[cfg(test)]

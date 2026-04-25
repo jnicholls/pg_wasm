@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 
 /// Module ABI hint used by the SQL load/reconfigure JSON payload.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) enum Abi {
     #[default]
@@ -12,7 +11,6 @@ pub(crate) enum Abi {
 }
 
 /// Per-module resource ceilings that can only tighten extension GUC limits.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Limits {
     pub(crate) fuel_per_invocation: Option<i32>,
@@ -22,7 +20,6 @@ pub(crate) struct Limits {
 }
 
 /// Per-module capability overrides that can only narrow extension GUC policy.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PolicyOverrides {
     pub(crate) allow_spi: Option<bool>,
@@ -37,7 +34,6 @@ pub(crate) struct PolicyOverrides {
 }
 
 /// JSON options accepted by `pg_wasm.load(...)`.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LoadOptions {
     pub(crate) abi: Option<Abi>,

@@ -179,6 +179,7 @@ pub(crate) fn unregister(fn_oid: pg_sys::Oid) -> Result<(), PgWasmError> {
 }
 
 #[cfg(feature = "pg13")]
+#[allow(clippy::too_many_arguments)]
 unsafe fn procedure_create(
     spec: &ProcSpec,
     schema_oid: pg_sys::Oid,
@@ -231,6 +232,7 @@ unsafe fn procedure_create(
     feature = "pg17",
     feature = "pg18"
 ))]
+#[allow(clippy::too_many_arguments)]
 unsafe fn procedure_create(
     spec: &ProcSpec,
     schema_oid: pg_sys::Oid,

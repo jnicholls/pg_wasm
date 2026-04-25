@@ -7,7 +7,6 @@ use crate::errors::{PgWasmError, Result};
 use crate::guc;
 
 /// Immutable snapshot of policy/limit GUC values used for one resolve call.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GucSnapshot {
     pub(crate) allow_spi: bool,
@@ -26,7 +25,6 @@ pub(crate) struct GucSnapshot {
 }
 
 impl GucSnapshot {
-    #[allow(dead_code)]
     pub(crate) fn from_gucs() -> Self {
         Self {
             allow_spi: guc::ALLOW_SPI.get(),
@@ -82,7 +80,6 @@ impl GucSnapshot {
 }
 
 /// Fully resolved policy/limit bundle with no optional fields.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct EffectivePolicy {
     pub(crate) allow_spi: bool,
@@ -100,7 +97,6 @@ pub(crate) struct EffectivePolicy {
     pub(crate) wasi_preopens: BTreeMap<String, String>,
 }
 
-#[allow(dead_code)]
 pub(crate) fn resolve(
     guc_snapshot: &GucSnapshot,
     overrides: Option<&PolicyOverrides>,

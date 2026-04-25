@@ -5,10 +5,8 @@ use std::io;
 use pgrx::prelude::PgSqlErrorCode;
 use thiserror::Error;
 
-#[allow(dead_code)]
 pub(crate) type Result<T> = core::result::Result<T, PgWasmError>;
 
-#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub(crate) enum PgWasmError {
     #[error("pg_wasm is disabled")]
@@ -35,7 +33,6 @@ pub(crate) enum PgWasmError {
     ValidationFailed(String),
 }
 
-#[allow(dead_code)]
 impl PgWasmError {
     pub(crate) const fn sqlstate(&self) -> PgSqlErrorCode {
         match self {

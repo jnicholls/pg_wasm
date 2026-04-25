@@ -747,7 +747,6 @@ pub(crate) mod migrations {
 
 /// Called once from `_PG_init`. The catalog shape check is intentionally
 /// lightweight and idempotent.
-#[allow(dead_code)]
 pub(crate) fn init() {
     migrations::validate_shape();
 }
