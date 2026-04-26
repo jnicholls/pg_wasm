@@ -2,6 +2,7 @@
 
 use sha2::{Digest, Sha256};
 use std::{
+    cell::Cell,
     collections::BTreeSet,
     fmt::Write as _,
     fs::{self, File, OpenOptions},
@@ -32,6 +33,12 @@ static ARTIFACT_FS_LOCK: Mutex<()> = Mutex::new(());
 
 static DATA_DIR_CACHE: OnceLock<PathBuf> = OnceLock::new();
 
+thread_local! {
+    /// Nesting depth for [`with_artifact_fs_lock_result`] / [`with_artifact_fs_lock`]. Values `> 0`
+    /// mean this thread already holds the process-global artifact `flock` (or `Mutex` fallback).
+    static ARTIFACT_FS_NEST: Cell<u32> = const { Cell::new(0) };
+}
+
 #[cfg(unix)]
 struct ArtifactFlockGuard(File);
 
@@ -54,20 +61,65 @@ impl ArtifactFlockGuard {
     }
 }
 
-pub(crate) fn with_artifact_fs_lock<T>(f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+/// Run `f` while holding the cross-process artifact lock (`flock` on Unix).
+///
+/// Re-entrant: nested calls (e.g. `write_atomic` during `load_impl`, or abort cleanup while a
+/// load still holds the lock) skip a second `flock` and run `f` directly.
+pub(crate) fn with_artifact_fs_lock_result<T, F>(f: F) -> Result<T, PgWasmError>
+where
+    F: FnOnce() -> Result<T, PgWasmError>,
+{
+    let n = ARTIFACT_FS_NEST.with(|c| c.get());
+    if n > 0 {
+        ARTIFACT_FS_NEST.with(|c| c.set(n.saturating_add(1)));
+        struct NestDec;
+        impl Drop for NestDec {
+            fn drop(&mut self) {
+                ARTIFACT_FS_NEST.with(|c| c.set(c.get().saturating_sub(1)));
+            }
+        }
+        let _nest_dec = NestDec;
+        return f();
+    }
+
     #[cfg(unix)]
     {
-        let root = artifacts_root_dir()?;
-        let _guard = ArtifactFlockGuard::acquire(&root)?;
+        let root = artifacts_root_dir().map_err(PgWasmError::Io)?;
+        let flock_guard = ArtifactFlockGuard::acquire(&root).map_err(PgWasmError::Io)?;
+        ARTIFACT_FS_NEST.with(|c| c.set(1));
+        struct OuterClear;
+        impl Drop for OuterClear {
+            fn drop(&mut self) {
+                ARTIFACT_FS_NEST.with(|c| c.set(0));
+            }
+        }
+        let _outer_clear = OuterClear;
+        let _flock = flock_guard;
         f()
     }
     #[cfg(not(unix))]
     {
-        let _guard = ARTIFACT_FS_LOCK
+        let mutex_guard = ARTIFACT_FS_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        ARTIFACT_FS_NEST.with(|c| c.set(1));
+        struct OuterClear;
+        impl Drop for OuterClear {
+            fn drop(&mut self) {
+                ARTIFACT_FS_NEST.with(|c| c.set(0));
+            }
+        }
+        let _outer_clear = OuterClear;
+        let _mutex_guard = mutex_guard;
         f()
     }
+}
+
+pub(crate) fn with_artifact_fs_lock<T>(f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    with_artifact_fs_lock_result(|| f().map_err(PgWasmError::Io)).map_err(|e| match e {
+        PgWasmError::Io(io) => io,
+        other => io::Error::other(other.to_string()),
+    })
 }
 
 pub(crate) fn artifacts_root_dir() -> io::Result<PathBuf> {
@@ -122,7 +174,17 @@ pub(crate) fn write_world_wit(module_id: u64, world_wit: &str) -> io::Result<Pat
 }
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    with_artifact_fs_lock(|| write_atomic_unlocked(path, bytes))
+    // Serialize all writes that participate in the real `$PGDATA/pg_wasm/` tree. Do not use
+    // `Path::starts_with(artifacts_root)` — symlinks / normalization can make that false for real
+    // artifact paths and skip the lock, letting parallel `#[pg_test]` backends race and delete
+    // each other's module trees.
+    //
+    // Host-only unit tests have no `DataDir`; [`artifacts_root_dir`] errors and we skip `flock`
+    // (writes go to temp paths in a single process).
+    match artifacts_root_dir() {
+        Ok(_) => with_artifact_fs_lock(|| write_atomic_unlocked(path, bytes)),
+        Err(_) => write_atomic_unlocked(path, bytes),
+    }
 }
 
 fn write_atomic_unlocked(path: &Path, bytes: &[u8]) -> io::Result<()> {

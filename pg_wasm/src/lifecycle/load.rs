@@ -81,27 +81,34 @@ pub(crate) fn load_impl(
     let limits_json = serde_json::to_value(opts.limits.clone().unwrap_or_default())
         .map_err(|e| PgWasmError::Internal(format!("serialize limits: {e}")))?;
 
+    // Hold the cross-process artifact lock for the whole load so concurrent backends cannot run
+    // `prune_stale` (or unload cleanup) against catalog snapshots that omit this session's
+    // not-yet-committed `modules` row — which would delete the on-disk tree under test.
     match classified {
-        Abi::Component => load_component_path(
-            module_name,
-            &bytes,
-            &wasm_sha256_bytes,
-            &opts,
-            extension_oid,
-            &effective,
-            policy_json,
-            limits_json,
-        ),
-        Abi::Core => load_core_path(
-            module_name,
-            &bytes,
-            &wasm_sha256_bytes,
-            &opts,
-            extension_oid,
-            &effective,
-            policy_json,
-            limits_json,
-        ),
+        Abi::Component => artifacts::with_artifact_fs_lock_result(|| {
+            load_component_path(
+                module_name,
+                &bytes,
+                &wasm_sha256_bytes,
+                &opts,
+                extension_oid,
+                &effective,
+                policy_json,
+                limits_json,
+            )
+        }),
+        Abi::Core => artifacts::with_artifact_fs_lock_result(|| {
+            load_core_path(
+                module_name,
+                &bytes,
+                &wasm_sha256_bytes,
+                &opts,
+                extension_oid,
+                &effective,
+                policy_json,
+                limits_json,
+            )
+        }),
     }
 }
 
