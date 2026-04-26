@@ -1,0 +1,16 @@
+[package]
+name = "tests"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+publish = false
+build = "build.rs"
+
+[dependencies]
+anyhow.workspace = true
+hex = "0.4"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-postgres = "0.7"
+url = "2"
