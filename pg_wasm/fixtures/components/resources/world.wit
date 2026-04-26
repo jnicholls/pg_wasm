@@ -1,0 +1,14 @@
+package corpus:res;
+
+interface counter {
+  resource counter {
+    constructor();
+    bump: func() -> s32;
+  }
+
+  peek: func(c: borrow<counter>) -> s32;
+}
+
+world resources-fixture {
+  export counter;
+}

@@ -187,7 +187,7 @@ BEGIN
 END
 $$;
 SELECT wasm.unload('errors_mapping_fixture', false) AS unloaded;
-WARNING:  pg_wasm: on-unload hook failed for module_id 2: policy resolve failed: invalid configuration: `fuel_per_invocation` must be a JSON integer; unload continues
+WARNING:  pg_wasm: on-unload hook failed for module_id 3: policy resolve failed: invalid configuration: `fuel_per_invocation` must be a JSON integer; unload continues
  unloaded 
 ----------
  t

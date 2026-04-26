@@ -1,0 +1,8 @@
+package corpus:wit;
+
+world wit-roundtrip {
+  export echo-bool: func(x: bool) -> bool;
+  export echo-s32: func(x: s32) -> s32;
+  export echo-s64: func(x: s64) -> s64;
+  export echo-string: func(x: string) -> string;
+}
