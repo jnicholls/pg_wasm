@@ -1,0 +1,15 @@
+package corpus:en;
+
+interface sides {
+  enum side {
+    left,
+    right,
+  }
+
+  const-left: func() -> side;
+  echo: func(s: side) -> side;
+}
+
+world enums-fixture {
+  export sides;
+}

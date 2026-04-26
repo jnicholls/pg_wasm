@@ -1,0 +1,5 @@
+package corpus:hooks;
+
+world hooks-fixture {
+  export on-reconfigure: func(policy: string) -> result<_, string>;
+}

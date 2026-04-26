@@ -1,0 +1,5 @@
+package corpus:pol;
+
+world policy-probe-fixture {
+  export ping: func() -> s32;
+}

@@ -168,7 +168,7 @@ todos:
     status: completed
   - id: test-corpus-and-pg_regress
     content: Build component fixtures (arith, strings, records, enums, variants, hooks, policy_probe, resources) and core fixtures (add_i32, echo_mem). Author pg_regress suites for lifecycle, WIT mappings, policy narrowing, error classes, metrics. Deterministic output with `ORDER BY` and `EXPLAIN (COSTS OFF, TIMING OFF)`.
-    status: pending
+    status: completed
   - id: integration-tests
     content: Add workspace `tests/` crate using `tokio-postgres`. Cover concurrent-backend load visibility via generation bumps, backend restart recovery, query cancellation via epoch interruption, fuel exhaustion, memory-pages limit, WASI policy denials.
     status: pending

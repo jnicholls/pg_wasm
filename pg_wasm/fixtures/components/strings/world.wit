@@ -1,0 +1,10 @@
+package corpus:str;
+
+interface bytes {
+  cat-bytes: func(a: list<u8>, b: list<u8>) -> list<u8>;
+  len-bytes: func(s: list<u8>) -> s32;
+}
+
+world strings-fixture {
+  export bytes;
+}

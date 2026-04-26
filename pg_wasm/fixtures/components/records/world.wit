@@ -1,0 +1,14 @@
+package corpus:rec;
+
+interface math {
+  record pair {
+    x: s32,
+    y: s32,
+  }
+
+  sum-fields: func(x: s32, y: s32) -> s32;
+}
+
+world records-fixture {
+  export math;
+}

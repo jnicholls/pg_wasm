@@ -1,0 +1,5 @@
+package corpus:arith;
+
+world arith-fixture {
+  export add: func(a: s32, b: s32) -> s32;
+}

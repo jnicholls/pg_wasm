@@ -1,0 +1,15 @@
+package corpus:var;
+
+interface nums {
+  variant maybe-num {
+    none,
+    some(s32),
+  }
+
+  unwrap-or: func(m: maybe-num, d: s32) -> s32;
+  unwrap-or-plain: func(present: bool, v: s32, d: s32) -> s32;
+}
+
+world variants-fixture {
+  export nums;
+}

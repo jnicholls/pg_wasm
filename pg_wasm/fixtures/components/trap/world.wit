@@ -1,0 +1,5 @@
+package corpus:trap;
+
+world trap-fixture {
+  export boom: func();
+}
