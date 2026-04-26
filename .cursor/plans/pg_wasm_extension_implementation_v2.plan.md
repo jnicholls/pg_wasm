@@ -171,7 +171,7 @@ todos:
     status: completed
   - id: integration-tests
     content: Add workspace `tests/` crate using `tokio-postgres`. Cover concurrent-backend load visibility via generation bumps, backend restart recovery, query cancellation via epoch interruption, fuel exhaustion, memory-pages limit, WASI policy denials.
-    status: pending
+    status: completed
   - id: docs-and-readme
     content: Update `README.md` with component-first usage. Write `docs/guc.md` (every GUC with default, scope, hot/cold reconfig), `docs/wit-mapping.md` (the full WIT -> PG table with examples). Reference them from `docs/architecture.md`.
     status: completed

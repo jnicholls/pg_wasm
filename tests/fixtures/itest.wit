@@ -1,0 +1,8 @@
+package pgwasm:itest;
+
+world w {
+  export add: func() -> s32;
+  export spin: func() -> s32;
+  export spin-param: func(x: s32) -> s32;
+  export grow: func() -> s32;
+}
