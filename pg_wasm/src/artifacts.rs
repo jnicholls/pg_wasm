@@ -1,11 +1,24 @@
 //! On-disk artifact layout and helpers under `$PGDATA/pg_wasm/`.
+//!
+//! ## `pg_upgrade` and extension upgrades
+//!
+//! - During `pg_upgrade`, the data directory (including `$PGDATA/pg_wasm/<module_id>/`) is carried
+//!   into the new cluster via the usual data-dir copy / hard-link strategy.
+//! - On the first backend start after a new Postgres major, [`check_compat`] may return
+//!   [`CompatCheck::StaleRecompile`] when the Wasmtime engine’s precompile compatibility fingerprint
+//!   no longer matches the `compat_hash` sidecar next to `module.cwasm`, or when
+//!   [`wasmtime::Engine::detect_precompiled_file`] disagrees with the expected artifact kind. Callers
+//!   then drop the precompiled blob (see [`invalidate_cwasm`]) and rebuild from `module.wasm`.
+//! - Catalog rows are migrated by the extension’s normal dump/restore path; the `wit_world` column
+//!   remains authoritative for reconstituting WIT / UDT shape.
 
 use sha2::{Digest, Sha256};
 use std::{
     cell::Cell,
-    collections::BTreeSet,
+    collections::{BTreeSet, hash_map::DefaultHasher},
     fmt::Write as _,
     fs::{self, File, OpenOptions},
+    hash::{Hash, Hasher},
     io::{self, ErrorKind, Write as _},
     path::{Path, PathBuf},
     sync::OnceLock,
@@ -17,9 +30,12 @@ use std::sync::Mutex;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 
+use wasmtime::{Engine, Precompiled};
+
 use crate::errors::PgWasmError;
 
 pub(crate) const ARTIFACTS_DIRNAME: &str = "pg_wasm";
+pub(crate) const COMPAT_HASH_FILENAME: &str = "compat_hash";
 pub(crate) const CHECKSUM_FILENAME: &str = "sha256";
 pub(crate) const MODULE_CWASM_FILENAME: &str = "module.cwasm";
 pub(crate) const MODULE_WASM_FILENAME: &str = "module.wasm";
@@ -414,6 +430,148 @@ fn sha256_hex(sha: &[u8; 32]) -> String {
     text
 }
 
+fn compat_hash_hex(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        let _ = write!(&mut text, "{byte:02x}");
+    }
+    text
+}
+
+fn engine_precompile_fingerprint(engine: &Engine) -> [u8; 32] {
+    let mut hasher = DefaultHasher::new();
+    engine.precompile_compatibility_hash().hash(&mut hasher);
+    let u = hasher.finish();
+    let mut out = [0u8; 32];
+    out[..8].copy_from_slice(&u.to_le_bytes());
+    out
+}
+
+fn decode_compat_hash_hex(input: &str) -> io::Result<Vec<u8>> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !input.is_ascii() || !input.len().is_multiple_of(2) {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "compat_hash must contain an even number of ASCII hex digits",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(input.len() / 2);
+    for chunk in input.as_bytes().chunks_exact(2) {
+        let chunk = std::str::from_utf8(chunk).map_err(|error| {
+            io::Error::new(
+                ErrorKind::InvalidData,
+                format!("compat_hash contains invalid UTF-8: {error}"),
+            )
+        })?;
+        let byte = u8::from_str_radix(chunk, 16).map_err(|error| {
+            io::Error::new(
+                ErrorKind::InvalidData,
+                format!("compat_hash contains non-hex bytes: {error}"),
+            )
+        })?;
+        bytes.push(byte);
+    }
+    Ok(bytes)
+}
+
+/// Expected precompiled artifact kind on disk (`module.cwasm`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExpectedKind {
+    Component,
+    Core,
+}
+
+/// Outcome of validating `module.cwasm` and its `compat_hash` sidecar against a live [`Engine`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CompatCheck {
+    MissingRecompile,
+    Ok,
+    StaleRecompile,
+}
+
+pub(crate) fn write_compat_hash(module_dir: &Path, hash: &[u8]) -> io::Result<()> {
+    let text = format!("{}\n", compat_hash_hex(hash));
+    write_atomic(&module_dir.join(COMPAT_HASH_FILENAME), text.as_bytes())
+}
+
+pub(crate) fn read_compat_hash(module_dir: &Path) -> io::Result<Option<Vec<u8>>> {
+    let path = module_dir.join(COMPAT_HASH_FILENAME);
+    match fs::read_to_string(&path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+        Ok(contents) => {
+            let line = contents
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("");
+            if line.trim().is_empty() {
+                return Ok(None);
+            }
+            decode_compat_hash_hex(line).map(Some)
+        }
+    }
+}
+
+pub(crate) fn check_compat(
+    module_dir: &Path,
+    engine: &Engine,
+    expected_kind: ExpectedKind,
+) -> Result<CompatCheck, PgWasmError> {
+    let cwasm_path = module_dir.join(MODULE_CWASM_FILENAME);
+    match fs::metadata(&cwasm_path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(CompatCheck::MissingRecompile);
+        }
+        Err(error) => return Err(PgWasmError::Io(error)),
+        Ok(metadata) if !metadata.is_file() => {
+            return Ok(CompatCheck::MissingRecompile);
+        }
+        Ok(_) => {}
+    }
+
+    let detected = Engine::detect_precompiled_file(&cwasm_path).map_err(|error| {
+        PgWasmError::InvalidModule(format!("precompiled file detection failed: {error}"))
+    })?;
+
+    let kind_ok = matches!(
+        (expected_kind, detected),
+        (ExpectedKind::Component, Some(Precompiled::Component))
+            | (ExpectedKind::Core, Some(Precompiled::Module))
+    );
+    if !kind_ok {
+        return Ok(CompatCheck::StaleRecompile);
+    }
+
+    let sidecar = read_compat_hash(module_dir).map_err(PgWasmError::Io)?;
+    let Some(stored) = sidecar else {
+        return Ok(CompatCheck::StaleRecompile);
+    };
+
+    let expected = engine_precompile_fingerprint(engine);
+    if stored.as_slice() != expected.as_slice() {
+        return Ok(CompatCheck::StaleRecompile);
+    }
+
+    Ok(CompatCheck::Ok)
+}
+
+pub(crate) fn invalidate_cwasm(module_dir: &Path) -> io::Result<()> {
+    let cwasm = module_dir.join(MODULE_CWASM_FILENAME);
+    match fs::remove_file(&cwasm) {
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        other => other?,
+    }
+    let sidecar = module_dir.join(COMPAT_HASH_FILENAME);
+    match fs::remove_file(&sidecar) {
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        other => other?,
+    }
+    Ok(())
+}
+
 #[cfg(all(test, not(feature = "pg_test")))]
 mod host_tests {
     use std::{
@@ -424,9 +582,17 @@ mod host_tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use wasmtime::{Config, Engine};
+
+    use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
+    use wit_parser::Resolve;
+
     use super::{
-        CHECKSUM_FILENAME, MODULE_WASM_FILENAME, artifacts_root_dir, ensure_module_dir,
-        module_dir_name, prune_stale, sha256_bytes, verify_checksum, write_atomic, write_checksum,
+        CHECKSUM_FILENAME, COMPAT_HASH_FILENAME, CompatCheck, ExpectedKind, MODULE_CWASM_FILENAME,
+        MODULE_WASM_FILENAME, WORLD_WIT_FILENAME, artifacts_root_dir, check_compat,
+        engine_precompile_fingerprint, ensure_module_dir, invalidate_cwasm, module_dir_name,
+        prune_stale, read_compat_hash, sha256_bytes, verify_checksum, write_atomic, write_checksum,
+        write_compat_hash,
     };
 
     struct TestDir {
@@ -558,5 +724,112 @@ mod host_tests {
         assert!(root.join(module_dir_name(active)).exists());
         assert!(!root.join(module_dir_name(stale)).exists());
         assert!(root.join("not-a-module-dir").exists());
+    }
+
+    fn test_engine() -> Engine {
+        let mut config = Config::new();
+        config.wasm_component_model(true);
+        config.epoch_interruption(true);
+        config.parallel_compilation(false);
+        Engine::new(&config).unwrap()
+    }
+
+    fn trivial_component_bytes() -> Vec<u8> {
+        let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        let mut resolve = Resolve::default();
+        let wit = "package test:compat; world w { }";
+        let pkg = resolve.push_str("fixture.wit", wit).unwrap();
+        let world_id = resolve.select_world(&[pkg], Some("w")).unwrap();
+        embed_component_metadata(&mut module, &resolve, world_id, StringEncoding::UTF8).unwrap();
+        ComponentEncoder::default()
+            .module(&module)
+            .unwrap()
+            .validate(true)
+            .encode()
+            .unwrap()
+    }
+
+    #[test]
+    fn compat_hash_round_trip() {
+        let _test_lock = lock_test_data_dir();
+        let test_dir = TestDir::new("compat_hash").unwrap();
+        let _data_dir_guard = DataDirGuard::new(test_dir.path.clone());
+
+        let module_id = 0xc0ffee_u64;
+        let module_dir = ensure_module_dir(module_id).unwrap();
+        let fp = engine_precompile_fingerprint(&test_engine());
+        write_compat_hash(&module_dir, &fp).unwrap();
+        let read_back = read_compat_hash(&module_dir).unwrap().unwrap();
+        assert_eq!(read_back, fp);
+    }
+
+    #[test]
+    fn invalidate_cwasm_removes_precompiled_leaves_sources() {
+        let _test_lock = lock_test_data_dir();
+        let test_dir = TestDir::new("invalidate_cwasm").unwrap();
+        let _data_dir_guard = DataDirGuard::new(test_dir.path.clone());
+
+        let module_id = 0xdecaf_u64;
+        let module_dir = ensure_module_dir(module_id).unwrap();
+        let engine = test_engine();
+        let bytes = trivial_component_bytes();
+        let cwasm = engine.precompile_component(&bytes).unwrap();
+        write_atomic(&module_dir.join(MODULE_CWASM_FILENAME), &cwasm).unwrap();
+        write_compat_hash(&module_dir, &engine_precompile_fingerprint(&engine)).unwrap();
+        write_atomic(&module_dir.join(MODULE_WASM_FILENAME), b"\0asm").unwrap();
+        write_atomic(&module_dir.join(WORLD_WIT_FILENAME), b"package x;").unwrap();
+
+        invalidate_cwasm(&module_dir).unwrap();
+
+        assert!(!module_dir.join(MODULE_CWASM_FILENAME).exists());
+        assert!(!module_dir.join(COMPAT_HASH_FILENAME).exists());
+        assert!(module_dir.join(MODULE_WASM_FILENAME).exists());
+        assert!(module_dir.join(WORLD_WIT_FILENAME).exists());
+    }
+
+    #[test]
+    fn check_compat_reports_stale_when_sidecar_hash_wrong() {
+        let _test_lock = lock_test_data_dir();
+        let test_dir = TestDir::new("check_compat_stale").unwrap();
+        let _data_dir_guard = DataDirGuard::new(test_dir.path.clone());
+
+        let module_id = 0xbadc0de_u64;
+        let module_dir = ensure_module_dir(module_id).unwrap();
+        let engine = test_engine();
+        let bytes = trivial_component_bytes();
+        let cwasm = engine.precompile_component(&bytes).unwrap();
+        write_atomic(&module_dir.join(MODULE_CWASM_FILENAME), &cwasm).unwrap();
+
+        let wrong = [0xffu8; 32];
+        write_compat_hash(&module_dir, &wrong).unwrap();
+        assert_eq!(
+            check_compat(&module_dir, &engine, ExpectedKind::Component).unwrap(),
+            CompatCheck::StaleRecompile
+        );
+
+        write_compat_hash(&module_dir, &engine_precompile_fingerprint(&engine)).unwrap();
+        assert_eq!(
+            check_compat(&module_dir, &engine, ExpectedKind::Component).unwrap(),
+            CompatCheck::Ok
+        );
+    }
+}
+
+#[cfg(feature = "pg_test")]
+#[pgrx::pg_schema]
+mod artifact_pg_tests {
+    use pgrx::prelude::*;
+
+    /// Nested `tests` schema: pgrx's harness invokes `tests.<fn>()` for `#[pg_test]`.
+    #[pg_schema]
+    mod tests {
+        use pgrx::prelude::*;
+        use pgrx::spi::Spi;
+
+        #[pg_test]
+        fn upgrade_script_pg_wasm_0_1_0_to_0_1_1_is_installed() {
+            Spi::run("CREATE EXTENSION IF NOT EXISTS pg_wasm").unwrap();
+            Spi::run("ALTER EXTENSION pg_wasm UPDATE TO '0.1.1'").unwrap();
+        }
     }
 }
