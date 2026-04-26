@@ -1,1 +1,1 @@
-
+-- Placeholder upgrade path (0.1.0 → 0.1.1): convention for future catalog migrations.

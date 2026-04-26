@@ -165,7 +165,7 @@ todos:
       we expect `Component`), delete the stale artifact and recompile from
       `module.wasm`. Add `sql/pg_wasm--X.Y--X.Z.sql` scaffolding;
       `catalog::migrations` validates shape on `_PG_init`.
-    status: pending
+    status: completed
   - id: test-corpus-and-pg_regress
     content: Build component fixtures (arith, strings, records, enums, variants, hooks, policy_probe, resources) and core fixtures (add_i32, echo_mem). Author pg_regress suites for lifecycle, WIT mappings, policy narrowing, error classes, metrics. Deterministic output with `ORDER BY` and `EXPLAIN (COSTS OFF, TIMING OFF)`.
     status: pending
