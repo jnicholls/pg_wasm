@@ -30,7 +30,7 @@ wasmtime = { version = "44", features = ["component-model"] }
 wasmtime-wasi = "44"
 wasmtime-wasi-http = "44"
 wat = "1"
-wit-bindgen = { version = "0.41", default-features = false, features = ["macros", "realloc"] }
+wit-bindgen = { version = "0.57", default-features = false, features = ["macros", "realloc"] }
 wit-component = "0.247"
 wit-parser = "0.247"
 
