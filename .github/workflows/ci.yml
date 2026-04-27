@@ -16,7 +16,7 @@ env:
 
 jobs:
   ci:
-    name: pg_wasm CI (fmt, check, clippy, test, pgrx test)
+    name: pg_wasm CI (fmt, clippy, test, pgrx test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,9 +33,6 @@ jobs:
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
-
-      - name: cargo check
-        run: cargo check --workspace
 
       - name: cargo clippy
         run: cargo clippy --workspace -- -D warnings
