@@ -8,9 +8,9 @@ build = "build.rs"
 
 [dependencies]
 anyhow.workspace = true
-hex = "0.4"
-serde = { workspace = true, features = ["derive"] }
+hex.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
-tokio-postgres = "0.7"
-url = "2"
+tokio.workspace = true
+tokio-postgres.workspace = true
+url.workspace = true
