@@ -1,5 +1,7 @@
 # pg_wasm
 
+[![CI](https://github.com/jnicholls/pg_wasm/actions/workflows/ci.yml/badge.svg)](https://github.com/jnicholls/pg_wasm/actions/workflows/ci.yml)
+
 `pg_wasm` runs WebAssembly **components** inside PostgreSQL and exposes
 their exports as strongly-typed SQL functions. A component's WIT world is
 mapped automatically to PostgreSQL types (records, enums, variants, flags,
