@@ -1,4 +1,4 @@
-comment = 'pg_wasm:  Created by pgrx'
+comment = 'pg_wasm: Binding WASM Components to SQL'
 default_version = '@CARGO_VERSION@'
 module_pathname = 'pg_wasm'
 relocatable = false

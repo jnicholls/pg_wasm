@@ -105,31 +105,29 @@ The key insights:
 
 ---
 
-## 3. Repository layout (target)
+## 3. Repository layout (current)
 
 ```text
 pg_wasm/
   Cargo.toml
+  build.rs
   pg_wasm.control
-  sql/                               # optional versioned SQL: views, upgrades
-    pg_wasm--0.2.0.sql
+  sql/                               # versioned SQL: catalog DDL, upgrades
+    pg_wasm--0.1.0.sql
+    pg_wasm--0.1.0--0.1.1.sql
+  wit/                               # host WIT (path for bindgen in runtime/host)
+    host.wit
+  fixtures/                          # guest components + core WAT for regress / build
+    components/
+    core/
   src/
     lib.rs                           # pgrx entry points + _PG_init
     guc.rs                           # GUC definitions
     errors.rs                        # PgWasmError + conversions
-    catalog/                         # durable cluster state
-      mod.rs
-      schema.rs                      # CREATE TABLE / INDEX DDL
-      modules.rs                     # CRUD on extension-schema modules
-      exports.rs
-      wit_types.rs
-      migrations.rs
+    catalog.rs                       # durable cluster state (SPI + nested modules)
     artifacts.rs                     # $PGDATA/pg_wasm/ layout and IO
     shmem.rs                         # shared-memory segment + metrics
-    registry/                        # process-local cache
-      mod.rs
-      module_handle.rs               # compiled module + instance pool
-      fn_map.rs                      # fn_oid -> (module_id, export)
+    registry.rs                      # process-local fn_oid / module export cache
     config.rs                        # LoadOptions, PolicyOverrides, Limits
     policy.rs                        # resolve(GUCs, overrides) -> EffectivePolicy
     abi.rs                           # Component vs core classifier (wasmparser)
@@ -138,24 +136,27 @@ pg_wasm/
       world.rs                       # parse WIT world / component types
       typing.rs                      # WIT type -> PgType resolver
       udt.rs                         # UDT / enum / domain registration
-      codegen.rs                     # Val marshaling helpers
     runtime/
-      mod.rs
+      mod.rs                         # epoch ticker, runtime init
       engine.rs                      # shared wasmtime::Engine factory
-      component.rs                   # component-model compile + instantiate
+      component.rs                   # component compile + instantiate; StoreLimits; WASI/linker (see §6)
       core.rs                        # core-module compile + instantiate
       pool.rs                        # per-module instance pool
-      limits.rs                      # StoreLimits, fuel, epoch interruption
-      wasi.rs                        # WASI p1 and p2 ctx builder from policy
+      host.rs                        # pg_wasm:host imports (pgrx backend)
+      host_stub.rs                   # host.rs replacement for host-only cargo test
     mapping/
       mod.rs
       scalars.rs                     # i32/i64/f32/f64/bool/string mappings
       composite.rs                   # record / tuple / variant / enum / flags
       list.rs                        # list<T> / option<T> / result<T,E>
-      jsonb.rs                       # WIT variant or `json` type -> jsonb
     proc_reg.rs                      # ProcedureCreate / RemoveFunctionById
     trampoline.rs                    # pg_wasm_udf_trampoline C entry point
-    lifecycle.rs                     # load / unload / reload / reconfigure
+    lifecycle/
+      mod.rs
+      load.rs
+      unload.rs
+      reload.rs
+      reconfigure.rs
     hooks.rs                         # on_load / on_unload / on_reconfigure
     views.rs                         # SRF table functions
   tests/pg_regress/
@@ -170,9 +171,15 @@ docs/
   wit-mapping.md
 ```
 
-Everything under `runtime/` and `wit/` is **Wasmtime-specific in v2**. If a
-second runtime is ever added, it goes under `runtime/<name>/` behind a feature
-flag and must satisfy the same `Runtime` trait (see §8).
+**Possible refactors (not the layout today):** split `catalog.rs` / `registry.rs`
+into subdirectories; add `wit/codegen.rs` or `mapping/jsonb.rs` if marshaling
+grows; carve `runtime/limits.rs` or `runtime/wasi.rs` out of `component.rs` /
+`mod.rs` if those surfaces need isolation.
+
+Everything under `src/runtime/` and `src/wit/` is **Wasmtime-specific in v2**;
+see **§6** for behavior. A second runtime, if added, would likely live under
+`runtime/<name>/` behind a feature flag; a shared `Runtime` trait is **not**
+implemented in the tree yet.
 
 ---
 
