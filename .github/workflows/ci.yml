@@ -29,6 +29,8 @@ jobs:
 
       - uses: ./.github/actions/setup-pgrx-pg17
 
+      - uses: ./.github/actions/install-wasm-tools
+
       - name: cargo fmt
         run: cargo fmt --all -- --check
 

@@ -1,0 +1,11 @@
+name: Install wasm-tools
+description: >-
+  Install the wasm-tools CLI on PATH (tests/build.rs and fixture scripts expect it).
+  Version tracks the workspace wit-component / wasmtime component stack (0.247).
+
+runs:
+  using: composite
+  steps:
+    - name: cargo install wasm-tools
+      shell: bash
+      run: cargo install wasm-tools --locked --version 1.247.0
