@@ -4,7 +4,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT}"
-rustup target add wasm32-wasip2 >/dev/null 2>&1 || true
+rustup target add wasm32-unknown-unknown wasm32-wasip2 >/dev/null 2>&1 || true
 for crate in arith strings records enums variants hooks policy_probe resources trap wit_roundtrip; do
   echo "building ${crate}..."
   if [[ "${crate}" == "strings" || "${crate}" == "resources" || "${crate}" == "trap" ]]; then

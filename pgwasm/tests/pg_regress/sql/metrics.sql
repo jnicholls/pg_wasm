@@ -1,4 +1,4 @@
--- Monotone counters in pgwasm.pgwasm_stats() after pgwasm.pgwasm_test_bump_export_counters.
+-- Monotone counters in wasm.stats() after wasm.test_bump_export_counters.
 SELECT set_config('pgwasm.fuel_enabled', 'off', false);
 SELECT set_config('pgwasm.invocation_deadline_ms', '0', false);
 
@@ -6,13 +6,13 @@ DO $met$
 DECLARE
     n text := 'metrics_mod';
 BEGIN
-    IF EXISTS (SELECT 1 FROM pgwasm.modules WHERE name = n) THEN
-        PERFORM pgwasm.pgwasm_unload(n, true);
+    IF EXISTS (SELECT 1 FROM wasm.modules WHERE name = n) THEN
+        PERFORM wasm.unload(n, true);
     END IF;
 END;
 $met$;
 
-SELECT pgwasm.pgwasm_load(
+SELECT wasm.load(
     'metrics_mod',
     json_build_object(
         'bytes',
@@ -524,15 +524,15 @@ SELECT pgwasm.pgwasm_load(
                 82, 78, 118, 67, 115, 102, 76, 102, 121, 54, 69, 73, 49, 53, 105, 76, 95, 55, 95, 95, 95, 114, 117,
                 115, 116, 99, 51, 53, 95, 95, 95, 114, 117, 115, 116, 95, 110, 111, 95, 97, 108, 108, 111, 99, 95,
                 115, 104, 105, 109, 95, 105, 115, 95, 117, 110, 115, 116, 97, 98, 108, 101, 95, 118, 50, 5, 55, 95,
-                90, 78, 49, 52, 119, 105, 116, 95, 98, 105, 110, 100, 103, 101, 110, 95, 114, 116, 49, 52, 114, 117,
-                110, 95, 99, 116, 111, 114, 115, 95, 111, 110, 99, 101, 49, 55, 104, 102, 99, 54, 54, 100, 98, 53,
-                55, 53, 52, 56, 98, 53, 57, 102, 98, 69, 6, 41, 95, 82, 78, 118, 67, 115, 102, 76, 102, 121, 54, 69,
-                73, 49, 53, 105, 76, 95, 55, 95, 95, 95, 114, 117, 115, 116, 99, 49, 49, 95, 95, 95, 114, 100, 108,
-                95, 97, 108, 108, 111, 99, 7, 43, 95, 82, 78, 118, 67, 115, 102, 76, 102, 121, 54, 69, 73, 49, 53,
-                105, 76, 95, 55, 95, 95, 95, 114, 117, 115, 116, 99, 49, 51, 95, 95, 95, 114, 100, 108, 95, 114, 101,
-                97, 108, 108, 111, 99, 8, 67, 95, 82, 78, 118, 78, 116, 78, 116, 78, 116, 78, 116, 67, 115, 104, 88,
-                102, 97, 82, 118, 116, 50, 116, 102, 87, 95, 51, 115, 116, 100, 51, 115, 121, 115, 51, 112, 97, 108,
-                52, 119, 97, 115, 105, 55, 104, 101, 108, 112, 101, 114, 115, 49, 52, 97, 98, 111, 114, 116, 95, 105,
+                90, 78, 49, 49, 119, 105, 116, 95, 98, 105, 110, 100, 103, 101, 110, 50, 114, 116, 49, 52, 114, 117,
+                110, 95, 99, 116, 111, 114, 115, 95, 111, 110, 99, 101, 49, 55, 104, 49, 102, 99, 52, 99, 49, 49, 48,
+                98, 57, 52, 53, 56, 101, 54, 100, 69, 6, 41, 95, 82, 78, 118, 67, 115, 102, 76, 102, 121, 54, 69, 73,
+                49, 53, 105, 76, 95, 55, 95, 95, 95, 114, 117, 115, 116, 99, 49, 49, 95, 95, 95, 114, 100, 108, 95,
+                97, 108, 108, 111, 99, 7, 43, 95, 82, 78, 118, 67, 115, 102, 76, 102, 121, 54, 69, 73, 49, 53, 105,
+                76, 95, 55, 95, 95, 95, 114, 117, 115, 116, 99, 49, 51, 95, 95, 95, 114, 100, 108, 95, 114, 101, 97,
+                108, 108, 111, 99, 8, 67, 95, 82, 78, 118, 78, 116, 78, 116, 78, 116, 78, 116, 67, 115, 104, 88, 102,
+                97, 82, 118, 116, 50, 116, 102, 87, 95, 51, 115, 116, 100, 51, 115, 121, 115, 51, 112, 97, 108, 52,
+                119, 97, 115, 105, 55, 104, 101, 108, 112, 101, 114, 115, 49, 52, 97, 98, 111, 114, 116, 95, 105,
                 110, 116, 101, 114, 110, 97, 108, 9, 12, 99, 97, 98, 105, 95, 114, 101, 97, 108, 108, 111, 99, 10,
                 74, 95, 82, 78, 118, 78, 116, 67, 115, 107, 112, 55, 109, 89, 77, 56, 79, 54, 89, 110, 95, 52, 119,
                 97, 115, 105, 53, 112, 114, 111, 120, 121, 52, 48, 95, 95, 95, 108, 105, 110, 107, 95, 99, 117, 115,
@@ -596,24 +596,24 @@ SELECT pgwasm.pgwasm_load(
 )
 ) AS loaded_metrics;
 
-SELECT pgwasm.pgwasm_test_bump_export_counters(m.module_id, 0, 2) AS bumped
-FROM pgwasm.modules m
+SELECT wasm.test_bump_export_counters(m.module_id, 0, 2) AS bumped
+FROM wasm.modules m
 WHERE m.name = 'metrics_mod';
 
-SELECT pgwasm.pgwasm_test_bump_export_counters(m.module_id, 0, 3) AS bumped_again
-FROM pgwasm.modules m
+SELECT wasm.test_bump_export_counters(m.module_id, 0, 3) AS bumped_again
+FROM wasm.modules m
 WHERE m.name = 'metrics_mod';
 
 SELECT export_name, invocations, traps, fuel_used_total
-FROM pgwasm.pgwasm_stats()
+FROM wasm.stats()
 WHERE module_name = 'metrics_mod'
 ORDER BY export_name;
 
 SELECT invocations >= 5 AS invocations_monotone
-FROM pgwasm.pgwasm_stats()
+FROM wasm.stats()
 WHERE module_name = 'metrics_mod' AND export_name = 'add';
 
 EXPLAIN (COSTS OFF, TIMING OFF)
-SELECT invocations FROM pgwasm.pgwasm_stats() WHERE module_name = 'metrics_mod';
+SELECT invocations FROM wasm.stats() WHERE module_name = 'metrics_mod';
 
-SELECT pgwasm.pgwasm_unload('metrics_mod', false) AS unloaded_metrics;
+SELECT wasm.unload('metrics_mod', false) AS unloaded_metrics;
