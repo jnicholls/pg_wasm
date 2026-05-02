@@ -137,11 +137,11 @@ pub(crate) fn load_impl(
     }
 }
 
-fn catalog_load_config_json(policy_json: &Value, limits_json: &Value) -> Result<Value> {
-    Ok(json!({
+fn catalog_load_config_json(policy_json: &Value, limits_json: &Value) -> Value {
+    json!({
         "limits": limits_json,
         "policy": policy_json,
-    }))
+    })
 }
 
 fn catalog_policy_json(overrides: Option<&PolicyOverrides>) -> Result<Value> {
@@ -260,7 +260,8 @@ fn load_component_path(
 
     let artifact_path = cwasm_path.display().to_string();
     let load_hook_config = world_exports_function_named(&decoded, ON_LOAD_WASM_NAME)
-        .then(|| catalog_load_config_json(&policy_json, &limits_json));
+        .then_some(())
+        .map(|_| catalog_load_config_json(&policy_json, &limits_json));
     let updated = modules::NewModule {
         abi: "component".to_string(),
         artifact_path,
@@ -288,7 +289,7 @@ fn load_component_path(
     })?;
 
     if let Some(config) = load_hook_config {
-        hooks::on_load(module_id_u64, &config?)?;
+        hooks::on_load(module_id_u64, &config)?;
     }
 
     shmem::bump_generation(module_id_u64);
