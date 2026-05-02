@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use pgrx::prelude::*;
 
 mod abi;
@@ -29,11 +27,6 @@ pub extern "C-unwind" fn _PG_init() {
     shmem::init();
     runtime::init();
     catalog::init();
-}
-
-#[pg_extern(name = "hello_pgwasm")]
-fn hello_pgwasm() -> &'static str {
-    "Hello, pgwasm"
 }
 
 mod sql_api {
@@ -98,11 +91,6 @@ mod tests {
     /// Avoid epoch deadline traps during guest runs that call SPI while the shared engine ticker
     /// advances the epoch (other tests in the same suite use epoch interruption heavily).
     const RELAXED_INVOCATION_DEADLINE_MS: i32 = 86_400_000;
-
-    #[pg_test]
-    fn test_hello_pgwasm() {
-        assert_eq!("Hello, pgwasm", crate::hello_pgwasm());
-    }
 
     #[pg_test]
     fn reconfigure_narrows_updates_catalog_and_bumps_generation() {
@@ -577,7 +565,7 @@ mod core_invoke_regress {
 
 /// This module is required by `cargo pgrx test` invocations.
 /// It must be visible at the root of your extension crate.
-#[cfg(all(test, feature = "pg_test"))]
+#[cfg(feature = "pg_test")]
 pub mod pg_test {
     pub fn setup(_options: Vec<&str>) {
         // perform one-off initialization when the pg_test framework starts

@@ -9,7 +9,7 @@ use thiserror::Error;
 use wasmtime::Trap;
 
 /// Wasmtime version pinned by the workspace (see `Cargo.toml` / `AGENTS.md`).
-pub(crate) const DEFAULT_WASMTIME_VERSION: &str = "43.0.0";
+pub(crate) const DEFAULT_WASMTIME_VERSION: &str = "44.0.0";
 
 pub(crate) type Result<T> = core::result::Result<T, PgWasmError>;
 
@@ -207,7 +207,7 @@ impl<T> IntoReport for Result<T> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "pg_test")))]
 mod tests {
     use super::{ErrorContext, PgWasmError};
 
@@ -264,6 +264,6 @@ mod tests {
         let s = ctx.format_detail();
         assert!(s.contains("module_id=42"), "{s}");
         assert!(s.contains("export_index=2"), "{s}");
-        assert!(s.contains("wasmtime=43.0.0"), "{s}");
+        assert!(s.contains("wasmtime=44.0.0"), "{s}");
     }
 }

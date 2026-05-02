@@ -23,6 +23,7 @@ pub(crate) struct HostState {
 
 /// Per-`Store` state for component instantiation: WASI + shared resource table + optional HTTP.
 pub(crate) struct StoreCtx {
+    #[cfg_attr(test, allow(dead_code))]
     pub(crate) host: HostState,
     http: WasiHttpCtx,
     /// Per-invocation store limits; filled by the trampoline before each call.

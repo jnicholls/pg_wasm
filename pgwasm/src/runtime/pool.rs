@@ -32,6 +32,7 @@ pub(crate) struct PoolInner {
     component: Arc<Component>,
     cv: Condvar,
     linker: Linker<StoreCtx>,
+    #[allow(dead_code)]
     module_id: u64,
     state: Mutex<PoolState>,
 }
@@ -237,6 +238,7 @@ impl InstancePool {
         self.inner.acquire(engine, policy)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn drain(&self) {
         self.inner.drain();
     }
